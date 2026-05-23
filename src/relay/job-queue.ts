@@ -586,7 +586,15 @@ export class JobQueue {
   queryByAgent(agentId: string, from?: Date, to?: Date): SimplifiedProvenanceRecord[] {
     const records: SimplifiedProvenanceRecord[] = [];
 
-    for (const job of this.jobs.values()) {
+    const jobsToCheck = new Map<string, Job>();
+    for (const job of this.getBySubmitter(agentId)) {
+      jobsToCheck.set(job.job_id, job);
+    }
+    for (const job of this.getByAgent(agentId)) {
+      jobsToCheck.set(job.job_id, job);
+    }
+
+    for (const job of jobsToCheck.values()) {
       if (!job.provenance) continue;
 
       const provRecords = [
