@@ -43,6 +43,7 @@ export class AgentRegistry {
   private agents: Map<string, RegisteredAgent> = new Map();
   private capabilityIndex: Map<string, Set<string>> = new Map();
   private heartbeatHistory: Map<string, { timestamp: string }[]> = new Map();
+  private socketIndex: Map<any, string> = new Map();
   private shaclValidator: SHACLValidator | null = null;
 
   constructor(shapesDir?: string, options?: { testMode?: boolean }) {
@@ -108,6 +109,9 @@ export class AgentRegistry {
     }]);
 
     this.agents.set(agentId, agent);
+    if (socket) {
+      this.socketIndex.set(socket, agentId);
+    }
 
     // Index by capability
     for (const cap of capabilities) {
@@ -146,6 +150,9 @@ export class AgentRegistry {
     const shimType = (agent.agentInfo as any).shimType || 'unknown';
     activeAgents.labels(shimType).dec();
 
+    if (agent.socket) {
+      this.socketIndex.delete(agent.socket);
+    }
     this.agents.delete(agentId);
   }
 
@@ -156,10 +163,9 @@ export class AgentRegistry {
   }
 
   getBySocket(socket: any): RegisteredAgent | undefined {
-    for (const agent of this.agents.values()) {
-      if (agent.socket === socket) {
-        return agent;
-      }
+    const agentId = this.socketIndex.get(socket);
+    if (agentId) {
+      return this.agents.get(agentId);
     }
     return undefined;
   }
