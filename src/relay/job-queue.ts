@@ -54,6 +54,7 @@ export class JobQueue {
   private typeIndex: Map<string, Set<string>> = new Map();
   private submitterIndex: Map<string, Set<string>> = new Map();
   private capabilityIndex: Map<string, Set<string>> = new Map();
+  private claimedByIndex: Map<string, Set<string>> = new Map();
   private dataDir: string;
   private persistencePath: string;
   private saveDebounceTimer?: NodeJS.Timeout;
@@ -175,6 +176,14 @@ export class JobQueue {
       }
       this.capabilityIndex.get(job.capability_required)!.add(job.job_id);
     }
+
+    // Index by claimed_by
+    if (job.claimed_by) {
+      if (!this.claimedByIndex.has(job.claimed_by)) {
+        this.claimedByIndex.set(job.claimed_by, new Set());
+      }
+      this.claimedByIndex.get(job.claimed_by)!.add(job.job_id);
+    }
   }
 
   // ============ Submission ============
@@ -235,6 +244,12 @@ export class JobQueue {
     job.status = JobStatus.CLAIMED;
     job.claimed_by = agentId;
     job.started_at = new Date().toISOString();
+
+    // Update claimed_by index
+    if (!this.claimedByIndex.has(agentId)) {
+      this.claimedByIndex.set(agentId, new Set());
+    }
+    this.claimedByIndex.get(agentId)!.add(jobId);
 
     // Generate PROV-O provenance record for job claim
     if (job.provenance) {
@@ -401,15 +416,12 @@ export class JobQueue {
   }
 
   getByAgent(agentId: string): Job[] {
-    const results: Job[] = [];
+    const jobIds = this.claimedByIndex.get(agentId);
+    if (!jobIds) return [];
 
-    for (const job of this.jobs.values()) {
-      if (job.claimed_by === agentId) {
-        results.push(job);
-      }
-    }
-
-    return results;
+    return Array.from(jobIds)
+      .map(id => this.jobs.get(id))
+      .filter((j): j is Job => j !== undefined);
   }
 
   findAvailable(capabilityRequired?: string, type?: string): Job | null {
@@ -725,6 +737,7 @@ export class JobQueue {
     this.typeIndex.clear();
     this.submitterIndex.clear();
     this.capabilityIndex.clear();
+    this.claimedByIndex.clear();
 
     for (const job of this.jobs.values()) {
       this.indexJob(job);
