@@ -1,0 +1,64 @@
+{
+  "@context": {
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "prov": "http://www.w3.org/ns/prov#",
+
+    "dap": "https://dap-protocol.org/ns#",
+
+    "@vocab": "https://dap-protocol.org/ns#",
+
+    "prov:type": {
+      "@type": "@id"
+    },
+    "prov:location": {
+      "@type": "@id"
+    },
+    "prov:entity": {
+      "@type": "@id"
+    },
+    "prov:activity": {
+      "@type": "@id"
+    },
+    "prov:agent": {
+      "@type": "@id"
+    },
+    "prov:wasGeneratedBy": {
+      "@type": "@id"
+    },
+    "prov:used": {
+      "@type": "@id"
+    },
+    "prov:wasDerivedFrom": {
+      "@type": "@id"
+    },
+    "prov:wasAssociatedWith": {
+      "@type": "@id"
+    },
+    "prov:wasAttributedTo": {
+      "@type": "@id"
+    },
+    "prov:actedOnBehalfOf": {
+      "@type": "@id"
+    },
+    "prov:wasInformedBy": {
+      "@type": "@id"
+    },
+    "prov:startedAtTime": {
+      "@type": "xsd:dateTime"
+    },
+    "prov:endedAtTime": {
+      "@type": "xsd:dateTime"
+    },
+    "prov:value": {
+      "@type": "xsd:anyType"
+    },
+
+    "dap:jobId": "@id",
+    "dap:messageId": "@id",
+    "dap:agentId": "@id",
+    "dap:capabilityUsed": "@vocab",
+    "dap:delegationChain": {
+      "@type": "@list"
+    }
+  }
+}

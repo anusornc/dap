@@ -1,0 +1,196 @@
+# =============================================================================
+# SHACL 1.1 Shape for DAP Protocol Message Validation
+# Version: 1.0.0
+# =============================================================================
+
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dap:  <https://dap-protocol.org/ns#> .
+
+# -----------------------------------------------------------------------------
+# Target: All DAP message nodes (identified by having a version property)
+# -----------------------------------------------------------------------------
+
+dap:MessageShape a sh:NodeShape ;
+  sh:targetObjectsOf dap:version ;
+  sh:closed "false"^^xsd:boolean ;
+  sh:message "DAP message validation failed"@en ;
+
+  # ---------------------------------------------------------------------------
+  # 1. version — required, must be literal "1.0.0"
+  # ---------------------------------------------------------------------------
+  sh:property dap:versionProperty .
+
+dap:versionProperty a sh:PropertyShape ;
+  sh:path dap:version ;
+  sh:hasValue "1.0.0" ;
+  sh:minCount 1 ;
+  sh:maxCount 1 ;
+  sh:datatype xsd:string ;
+  sh:message "The 'version' property is required and must be exactly '1.0.0'"@en .
+
+# ---------------------------------------------------------------------------
+# 2. msg_id — required, must match UUID pattern
+# ---------------------------------------------------------------------------
+
+dap:msgIdProperty a sh:PropertyShape ;
+  sh:path dap:msg_id ;
+  sh:minCount 1 ;
+  sh:maxCount 1 ;
+  sh:pattern "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" ;
+  sh:flags "i" ;
+  sh:message "The 'msg_id' property is required and must be a valid UUID (e.g., '550e8400-e29b-41d4-a716-446655440000')"@en .
+
+# ---------------------------------------------------------------------------
+# 3. timestamp — required, must be valid xsd:dateTime
+# ---------------------------------------------------------------------------
+
+dap:timestampProperty a sh:PropertyShape ;
+  sh:path dap:timestamp ;
+  sh:minCount 1 ;
+  sh:maxCount 1 ;
+  sh:datatype xsd:dateTime ;
+  sh:message "The 'timestamp' property is required and must be a valid ISO 8601 datetime (e.g., '2026-05-21T10:00:00Z')"@en .
+
+# ---------------------------------------------------------------------------
+# 4. from — required object with agent_id (required) and capabilities (optional)
+# ---------------------------------------------------------------------------
+
+dap:fromProperty a sh:PropertyShape ;
+  sh:path dap:from ;
+  sh:minCount 1 ;
+  sh:maxCount 1 ;
+  sh:node dap:FromShape ;
+  sh:message "The 'from' property is required and must be an object containing 'agent_id'"@en .
+
+dap:FromShape a sh:NodeShape ;
+  sh:property dap:fromAgentIdProperty ;
+  sh:property dap:fromCapabilitiesProperty .
+
+dap:fromAgentIdProperty a sh:PropertyShape ;
+  sh:path dap:agent_id ;
+  sh:minCount 1 ;
+  sh:maxCount 1 ;
+  sh:datatype xsd:string ;
+  sh:message "The 'from.agent_id' property is required and must be a non-empty string"@en .
+
+dap:fromCapabilitiesProperty a sh:PropertyShape ;
+  sh:path dap:capabilities ;
+  sh:maxCount 1 ;
+  sh:nodeKind sh:IRI ;
+  sh:or ( [ sh:hasValue () ] [ sh:nodeKind sh:Blank ] ) ;
+  sh:message "The 'from.capabilities' property is optional and must be an array of capability IRIs"@en .
+
+# ---------------------------------------------------------------------------
+# 5. to — required, one of: {agent_id}, {capability}, {topic}, or "broadcast"
+# ---------------------------------------------------------------------------
+
+dap:toProperty a sh:PropertyShape ;
+  sh:path dap:to ;
+  sh:minCount 1 ;
+  sh:maxCount 1 ;
+  sh:or (
+    [ sh:node dap:ToAgentIdShape ]
+    [ sh:node dap:ToCapabilityShape ]
+    [ sh:node dap:ToTopicShape ]
+    [ sh:hasValue "broadcast" ]
+  ) ;
+  sh:message "The 'to' property is required and must be either: {agent_id}, {capability}, {topic}, or the literal 'broadcast'"@en .
+
+dap:ToAgentIdShape a sh:NodeShape ;
+  sh:property dap:toAgentIdValue ;
+  sh:message "Invalid 'to.agent_id': must be a non-empty string" .
+
+dap:toAgentIdValue a sh:PropertyShape ;
+  sh:path dap:agent_id ;
+  sh:minCount 1 ;
+  sh:datatype xsd:string ;
+  sh:minLength 1 .
+
+dap:ToCapabilityShape a sh:NodeShape ;
+  sh:property dap:toCapabilityValue ;
+  sh:message "Invalid 'to.capability': must reference a valid capability IRI" .
+
+dap:toCapabilityValue a sh:PropertyShape ;
+  sh:path dap:capability ;
+  sh:minCount 1 ;
+  sh:nodeKind sh:IRI .
+
+dap:ToTopicShape a sh:NodeShape ;
+  sh:property dap:toTopicValue ;
+  sh:message "Invalid 'to.topic': must be a non-empty string" .
+
+dap:toTopicValue a sh:PropertyShape ;
+  sh:path dap:topic ;
+  sh:minCount 1 ;
+  sh:datatype xsd:string ;
+  sh:minLength 1 .
+
+# ---------------------------------------------------------------------------
+# 6. action — required, must be one of the defined DAP action types
+# ---------------------------------------------------------------------------
+
+dap:actionProperty a sh:PropertyShape ;
+  sh:path dap:action ;
+  sh:minCount 1 ;
+  sh:maxCount 1 ;
+  sh:in (
+    "request"
+    "response"
+    "stream"
+    "event"
+    "job-submission"
+    "job-claim"
+    "job-complete"
+    "job-progress"
+    "job-cancel"
+    "capability-query"
+    "capability-update"
+    "heartbeat"
+    "error"
+  ) ;
+  sh:message "The 'action' property is required and must be one of: request, response, stream, event, job-submission, job-claim, job-complete, job-progress, job-cancel, capability-query, capability-update, heartbeat, error"@en .
+
+# ---------------------------------------------------------------------------
+# 7. payload — required object with type (string) and data (object)
+# ---------------------------------------------------------------------------
+
+dap:payloadProperty a sh:PropertyShape ;
+  sh:path dap:payload ;
+  sh:minCount 1 ;
+  sh:maxCount 1 ;
+  sh:node dap:PayloadShape ;
+  sh:message "The 'payload' property is required and must be an object with 'type' and 'data'"@en .
+
+dap:PayloadShape a sh:NodeShape ;
+  sh:property dap:payloadTypeProperty ;
+  sh:property dap:payloadDataProperty ;
+  sh:message "Invalid payload structure: both 'type' (string) and 'data' (object) are required"@en .
+
+dap:payloadTypeProperty a sh:PropertyShape ;
+  sh:path dap:type ;
+  sh:minCount 1 ;
+  sh:maxCount 1 ;
+  sh:datatype xsd:string ;
+  sh:minLength 1 ;
+  sh:message "The 'payload.type' property is required and must be a non-empty string (e.g., 'task-delegation')"@en .
+
+dap:payloadDataProperty a sh:PropertyShape ;
+  sh:path dap:data ;
+  sh:minCount 1 ;
+  sh:maxCount 1 ;
+  sh:nodeKind sh:Blank ;
+  sh:message "The 'payload.data' property is required and must be an object"@en .
+
+# ---------------------------------------------------------------------------
+# 8. reply_to — optional UUID
+# ---------------------------------------------------------------------------
+
+dap:replyToProperty a sh:PropertyShape ;
+  sh:path dap:reply_to ;
+  sh:maxCount 1 ;
+  sh:pattern "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" ;
+  sh:flags "i" ;
+  sh:message "The 'reply_to' property, if present, must be a valid UUID"@en .

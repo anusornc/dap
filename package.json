@@ -1,0 +1,49 @@
+{
+  "name": "distributed-agent-protocol",
+  "version": "1.0.0",
+  "description": "DAP - A protocol for heterogeneous AI agents to coordinate across machines",
+  "main": "dist/relay/server.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/relay/server.js",
+    "dev": "tsx watch src/relay/server.ts",
+    "relay": "npm run dev",
+    "shim:mavis": "tsx src/shims/mavis.ts",
+    "shim:claude": "tsx src/shims/claude-code.ts",
+    "shim:codex": "tsx src/shims/codex.ts",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "lint": "eslint src --ext .ts"
+  },
+  "keywords": [
+    "ai-agent",
+    "distributed",
+    "multi-agent",
+    "coordination",
+    "protocol"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.16.0",
+    "uuid": "^9.0.0",
+    "zod": "^3.22.4",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/uuid": "^9.0.7",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0",
+    "vitest": "^1.2.0",
+    "eslint": "^8.56.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0"
+  }
+}

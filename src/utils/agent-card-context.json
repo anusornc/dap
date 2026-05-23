@@ -1,0 +1,93 @@
+{
+  "@context": {
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+
+    "dap": "https://dap-protocol.org/ns#",
+
+    "@vocab": "https://dap-protocol.org/ns#",
+
+    "id": {
+      "@id": "@id"
+    },
+    "type": {
+      "@id": "@type"
+    },
+
+    "AgentCard": "dap:AgentCard",
+    "capabilities": {
+      "@id": "dap:capabilities",
+      "@type": "@list"
+    },
+    "capability": {
+      "@id": "dap:capability"
+    },
+    "name": {
+      "@id": "dap:name"
+    },
+    "description": {
+      "@id": "dap:description"
+    },
+    "version": {
+      "@id": "dap:version"
+    },
+    "protocolVersion": {
+      "@id": "dap:protocolVersion"
+    },
+    "shimType": {
+      "@id": "dap:shimType",
+      "@type": "@keyword"
+    },
+    "endpoints": {
+      "@id": "dap:endpoints",
+      "@type": "@vocab"
+    },
+    "wssUrl": {
+      "@id": "dap:wssUrl",
+      "@type": "@id"
+    },
+    "httpUrl": {
+      "@id": "dap:httpUrl",
+      "@type": "@id"
+    },
+    "wsUrl": {
+      "@id": "dap:wsUrl",
+      "@type": "@id"
+    },
+    "status": {
+      "@id": "dap:status"
+    },
+    "metadata": {
+      "@id": "dap:metadata",
+      "@type": "@vocab"
+    },
+
+    "maxConcurrent": {
+      "@id": "dap:maxConcurrent",
+      "@type": "xsd:integer"
+    },
+    "registeredAt": {
+      "@id": "prov:wasGeneratedAtTime",
+      "@type": "xsd:dateTime"
+    },
+
+    "prov": "http://www.w3.org/ns/prov#",
+    "prov:type": {
+      "@type": "@id"
+    },
+    "prov:wasGeneratedBy": {
+      "@type": "@id"
+    },
+    "prov:wasAssociatedWith": {
+      "@type": "@id"
+    },
+    "prov:actedOnBehalfOf": {
+      "@type": "@id"
+    },
+    "prov:startedAtTime": {
+      "@type": "xsd:dateTime"
+    },
+    "prov:endedAtTime": {
+      "@type": "xsd:dateTime"
+    }
+  }
+}

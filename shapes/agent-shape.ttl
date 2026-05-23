@@ -1,0 +1,140 @@
+# =============================================================================
+# DAP Agent Registration Shape — SHACL 1.1
+# Validates agent registration data submitted via Agent Card (JSON-LD context)
+# =============================================================================
+
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dap:  <https://dap-protocol.org/ns#> .
+@prefix schema: <https://schema.org/> .
+
+# -----------------------------------------------------------------------------
+# Root shape — AgentRegistration
+# -----------------------------------------------------------------------------
+dap:AgentRegistrationShape a sh:NodeShape ;
+  rdfs:label "DAP Agent Registration" ;
+  rdfs:comment "Shape for validating DAP agent registration records." ;
+
+  # --- agent_id: REQUIRED ---
+  sh:property [
+    sh:path dap:agent_id ;
+    sh:name "agent_id" ;
+    sh:description "Unique identifier for the agent (alphanumeric, underscore, hyphen)" ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:string ;
+    sh:pattern "^[a-zA-Z0-9_-]+$" ;
+    sh:message "agent_id is required and must be a non-empty string matching ^[a-zA-Z0-9_-]+$" ;
+    sh:severity sh:Violation ;
+  ] ;
+
+  # --- capabilities: REQUIRED, at least 1 item ---
+  sh:property [
+    sh:path dap:capabilities ;
+    sh:name "capabilities" ;
+    sh:description "List of capability names the agent supports" ;
+    sh:minCount 1 ;
+    sh:minLength 1 ;
+    sh:eachItemShape [
+      sh:datatype xsd:string ;
+      sh:minLength 1 ;
+      sh:message "Each capability must be a non-empty string" ;
+      sh:severity sh:Violation ;
+    ] ;
+    sh:message "capabilities is required and must contain at least one non-empty string" ;
+    sh:severity sh:Violation ;
+  ] ;
+
+  # --- capabilityDetails: OPTIONAL array ---
+  sh:property [
+    sh:path dap:capabilityDetails ;
+    sh:name "capabilityDetails" ;
+    sh:description "Detailed configuration for each capability" ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:IRI ;
+    # Each item in the array must be a blank node of type dap:CapabilityDetail
+    sh:nodeShape dap:CapabilityDetailShape ;
+    sh:message "capabilityDetails must be an array of capability detail objects" ;
+    sh:severity sh:Warning ;
+  ] ;
+
+  # --- os: OPTIONAL, enum restricted ---
+  sh:property [
+    sh:path dap:os ;
+    sh:name "os" ;
+    sh:description "Operating system where the agent runs" ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:string ;
+    sh:in ( "darwin" "linux" "windows" "unknown" "" ) ;
+    sh:message "os must be one of: darwin, linux, windows, unknown" ;
+    sh:severity sh:Warning ;
+  ] ;
+
+  # --- version: OPTIONAL, semver ---
+  sh:property [
+    sh:path dap:version ;
+    sh:name "version" ;
+    sh:description "Agent implementation version (semver)" ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:string ;
+    sh:pattern "^\\d+\\.\\d+\\.\\d+" ;
+    sh:message "version must be a semver string (e.g., 1.0.0)" ;
+    sh:severity sh:Warning ;
+  ] ;
+
+  # --- metadata: OPTIONAL JSON object ---
+  sh:property [
+    sh:path dap:metadata ;
+    sh:name "metadata" ;
+    sh:description "Additional key-value metadata for the agent" ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI ;
+    sh:message "metadata must be a JSON object" ;
+    sh:severity sh:Warning ;
+  ] .
+
+# -----------------------------------------------------------------------------
+# Nested shape — CapabilityDetail
+# -----------------------------------------------------------------------------
+dap:CapabilityDetailShape a sh:NodeShape ;
+  rdfs:label "Capability Detail" ;
+  rdfs:comment "Shape for individual capability detail entries." ;
+
+  # name: REQUIRED
+  sh:property [
+    sh:path dap:name ;
+    sh:name "name" ;
+    sh:description "Name of the capability this detail describes" ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:string ;
+    sh:message "capabilityDetails[].name is required" ;
+    sh:severity sh:Violation ;
+  ] ;
+
+  # version: OPTIONAL, semver
+  sh:property [
+    sh:path dap:version ;
+    sh:name "version" ;
+    sh:description "Capability implementation version" ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:string ;
+    sh:pattern "^\\d+\\.\\d+\\.\\d+" ;
+    sh:message "capabilityDetails[].version must match semver (e.g., 1.0.0)" ;
+    sh:severity sh:Warning ;
+  ] ;
+
+  # maxConcurrent: OPTIONAL, positive integer, default 1
+  sh:property [
+    sh:path dap:maxConcurrent ;
+    sh:name "maxConcurrent" ;
+    sh:description "Maximum concurrent executions allowed for this capability" ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:integer ;
+    sh:minInclusive 1 ;
+    sh:defaultValue "1"^^xsd:integer ;
+    sh:message "capabilityDetails[].maxConcurrent must be a positive integer (default: 1)" ;
+    sh:severity sh:Warning ;
+  ] .

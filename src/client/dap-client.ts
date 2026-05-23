@@ -1,0 +1,398 @@
+/**
+ * DAP Client Library
+ * Easy-to-use client for connecting agents to the relay
+ */
+
+import { v4 as uuidv4 } from 'uuid';
+import {
+  DAPMessage,
+  MessageAction,
+  Capability,
+  AgentInfo,
+  Job,
+} from '../protocol/types.js';
+
+export interface DAPClientConfig {
+  relayUrl: string;
+  agentId: string;
+  apiKey?: string;
+  capabilities: Capability[];
+  metadata?: Record<string, unknown>;
+  reconnectIntervalMs?: number;
+  requestTimeoutMs?: number;
+}
+
+export type MessageHandler = (msg: DAPMessage) => Promise<void>;
+
+export class DAPClient {
+  private config: DAPClientConfig;
+  private socket: WebSocket | null = null;
+  private connected: boolean = false;
+  private messageHandlers: Map<string, MessageHandler> = new Map();
+  private pendingRequests: Map<string, {
+    resolve: (msg: DAPMessage) => void;
+    reject: (err: Error) => void;
+    timeout: NodeJS.Timeout;
+  }> = new Map();
+  private reconnectTimer?: NodeJS.Timeout;
+  private reconnectAttempts: number = 0;
+
+  constructor(config: DAPClientConfig) {
+    this.config = {
+      reconnectIntervalMs: 5000,
+      requestTimeoutMs: 60000,
+      ...config,
+    };
+  }
+
+  // ============ Connection ============
+
+  async connect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(this.config.relayUrl);
+      if (this.config.apiKey) {
+        url.searchParams.set('token', this.config.apiKey);
+      }
+
+      this.socket = new WebSocket(url.toString());
+
+      this.socket.onopen = () => {
+        console.log(`[DAPClient] Connected to ${this.config.relayUrl}`);
+
+        const registerMsg = {
+          action: 'register',
+          agentId: this.config.agentId,
+          capabilities: this.config.capabilities,
+          metadata: this.config.metadata,
+          os: process.platform,
+          version: '1.0.0',
+        };
+
+        this.socket!.send(JSON.stringify(registerMsg));
+        this.connected = true;
+        this.reconnectAttempts = 0;
+        resolve();
+      };
+
+      this.socket.onmessage = async (event) => {
+        try {
+          const msg = JSON.parse(event.data) as DAPMessage;
+          await this.handleMessage(msg);
+        } catch (err) {
+          console.error('[DAPClient] Message handling error:', err);
+        }
+      };
+
+      this.socket.onclose = (event) => {
+        console.log(`[DAPClient] Disconnected: ${event.code}`);
+        this.connected = false;
+        this.scheduleReconnect();
+      };
+
+      this.socket.onerror = (err) => {
+        console.error('[DAPClient] Connection error:', err);
+        reject(err);
+      };
+    });
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+
+    if (this.socket) {
+      this.socket.close(1000, 'Client disconnect');
+      this.socket = null;
+      this.connected = false;
+    }
+  }
+
+  isConnected(): boolean {
+    return this.connected && this.socket?.readyState === WebSocket.OPEN;
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
+
+    this.reconnectAttempts++;
+    const delay = Math.min(
+      this.config.reconnectIntervalMs! * Math.pow(2, this.reconnectAttempts - 1),
+      60000
+    );
+
+    console.log(`[DAPClient] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = undefined;
+      try {
+        await this.connect();
+        console.log('[DAPClient] Reconnected');
+      } catch {
+        // Will try again
+      }
+    }, delay);
+  }
+
+  // ============ Message Handling ============
+
+  private async handleMessage(msg: DAPMessage): Promise<void> {
+    if (msg.action === MessageAction.RESPONSE || msg.action === MessageAction.ERROR) {
+      const pending = this.pendingRequests.get(msg.reply_to || '');
+      if (pending) {
+        clearTimeout(pending.timeout);
+        pending.resolve(msg);
+        this.pendingRequests.delete(msg.reply_to || '');
+        return;
+      }
+    }
+
+    for (const handler of this.messageHandlers.values()) {
+      try {
+        await handler(msg);
+      } catch (err) {
+        console.error('[DAPClient] Handler error:', err);
+      }
+    }
+  }
+
+  on(action: string, handler: MessageHandler): void {
+    this.messageHandlers.set(action, handler);
+  }
+
+  off(action: string): void {
+    this.messageHandlers.delete(action);
+  }
+
+  // ============ Sending Messages ============
+
+  private async send(msg: DAPMessage): Promise<void> {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('Not connected to relay');
+    }
+    this.socket.send(JSON.stringify(msg));
+  }
+
+  private getAgentInfo(): AgentInfo {
+    return {
+      agent_id: this.config.agentId,
+      capabilities: this.config.capabilities.map(c => c.name),
+      capabilityDetails: this.config.capabilities,
+      metadata: this.config.metadata,
+      version: '1.0.0',
+    };
+  }
+
+  // ============ P2P Messaging ============
+
+  async sendRequest(
+    toAgentId: string,
+    task: {
+      description: string;
+      type: string;
+      context?: Record<string, unknown>;
+      priority?: number;
+    },
+    timeoutMs?: number
+  ): Promise<{
+    success: boolean;
+    result?: unknown;
+    error?: string;
+    executionTimeMs: number;
+  }> {
+    const startTime = Date.now();
+    const msgId = uuidv4();
+
+    const msg: DAPMessage = {
+      version: '1.0.0',
+      msg_id: msgId,
+      timestamp: new Date().toISOString(),
+      from: this.getAgentInfo(),
+      to: { agent_id: toAgentId },
+      action: MessageAction.REQUEST,
+      payload: {
+        type: 'task-delegation',
+        data: task,
+      },
+    };
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(msgId);
+        reject(new Error(`Request timeout after ${timeoutMs || this.config.requestTimeoutMs}ms`));
+      }, timeoutMs || this.config.requestTimeoutMs);
+
+      this.pendingRequests.set(msgId, {
+        resolve: (responseMsg: DAPMessage) => {
+          const data = responseMsg.payload.data;
+          resolve({
+            success: data.success,
+            result: data.result,
+            error: data.error,
+            executionTimeMs: Date.now() - startTime,
+          });
+        },
+        reject,
+        timeout,
+      });
+
+      this.send(msg).catch(reject);
+    });
+  }
+
+  async sendEvent(
+    to: string | { capability?: string; agent_id?: string },
+    eventType: string,
+    data: Record<string, unknown>
+  ): Promise<void> {
+    const msg: DAPMessage = {
+      version: '1.0.0',
+      msg_id: uuidv4(),
+      timestamp: new Date().toISOString(),
+      from: this.getAgentInfo(),
+      to: typeof to === 'string' ? to as any : to,
+      action: MessageAction.EVENT,
+      payload: {
+        type: 'custom-event',
+        data: {
+          eventType,
+          ...data,
+        },
+      },
+    };
+
+    await this.send(msg);
+  }
+
+  // ============ Job Queue ============
+
+  async submitJob(
+    jobType: string,
+    payload: Record<string, unknown>,
+    options?: {
+      priority?: number;
+      capabilityRequired?: string;
+      constraints?: Record<string, unknown>;
+      timeoutSeconds?: number;
+    }
+  ): Promise<string> {
+    const msgId = uuidv4();
+
+    const msg: DAPMessage = {
+      version: '1.0.0',
+      msg_id: msgId,
+      timestamp: new Date().toISOString(),
+      from: this.getAgentInfo(),
+      to: { topic: `task-queue:${jobType}` },
+      action: MessageAction.JOB_SUBMISSION,
+      payload: {
+        type: 'job-submission',
+        data: {
+          type: jobType,
+          priority: options?.priority ?? 5,
+          payload,
+          capabilityRequired: options?.capabilityRequired,
+          constraints: options?.constraints,
+          timeoutSeconds: options?.timeoutSeconds ?? 300,
+        },
+      },
+    };
+
+    await this.send(msg);
+    return msgId;
+  }
+
+  async claimJob(capability: string): Promise<Job | null> {
+    const msg: DAPMessage = {
+      version: '1.0.0',
+      msg_id: uuidv4(),
+      timestamp: new Date().toISOString(),
+      from: this.getAgentInfo(),
+      to: { capability },
+      action: MessageAction.JOB_CLAIM,
+      payload: {
+        type: 'job-claim',
+        data: {
+          agentId: this.config.agentId,
+          capability,
+        },
+      },
+    };
+
+    await this.send(msg);
+    return null;
+  }
+
+  async completeJob(jobId: string, result: unknown, error?: string): Promise<void> {
+    const msg: DAPMessage = {
+      version: '1.0.0',
+      msg_id: uuidv4(),
+      timestamp: new Date().toISOString(),
+      from: this.getAgentInfo(),
+      to: { agent_id: 'relay' },
+      action: MessageAction.JOB_COMPLETE,
+      payload: {
+        type: 'job-result',
+        data: {
+          jobId,
+          success: !error,
+          result,
+          error,
+        },
+      },
+    };
+
+    await this.send(msg);
+  }
+
+  // ============ Capability Discovery ============
+
+  async getCapabilities(): Promise<Map<string, string[]>> {
+    return new Promise((resolve) => {
+      const msg: DAPMessage = {
+        version: '1.0.0',
+        msg_id: uuidv4(),
+        timestamp: new Date().toISOString(),
+        from: this.getAgentInfo(),
+        to: 'broadcast',
+        action: MessageAction.CAPABILITY_QUERY,
+        payload: {
+          type: 'capability-query',
+          data: {},
+        },
+      };
+
+      const handler = async (response: DAPMessage) => {
+        if (response.action === MessageAction.RESPONSE) {
+          this.messageHandlers.delete('capability-response');
+          resolve(new Map(Object.entries(response.payload.data.capabilities || {})));
+        }
+      };
+
+      this.messageHandlers.set('capability-response', handler);
+      this.send(msg);
+
+      setTimeout(() => {
+        this.messageHandlers.delete('capability-response');
+        resolve(new Map());
+      }, 5000);
+    });
+  }
+
+  // ============ Utility ============
+
+  getAgentId(): string {
+    return this.config.agentId;
+  }
+
+  getCapabilitiesList(): string[] {
+    return this.config.capabilities.map(c => c.name);
+  }
+}
+
+export function createDAPClient(config: DAPClientConfig): DAPClient {
+  return new DAPClient(config);
+}
+
+export default DAPClient;

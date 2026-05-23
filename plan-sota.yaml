@@ -1,0 +1,248 @@
+version: 1
+plan:
+  name: 'DAP SOTA — Agent Cards + SHACL + Provenance API'
+  max_concurrency: 4
+  max_consecutive_failures: 2
+  max_cycles: 15
+  auto_reject_retries: 2
+
+tasks:
+  # ── Track 1: Semantic Agent Cards ──────────────────────────────────────
+  - id: agent-cards
+    title: 'Implement semantic agent cards with JSON-LD capability discovery'
+    prompt: |
+      Implement JSON-LD Semantic Agent Cards for the DAP relay server at:
+        /Users/anusornchaikaew/.minimax-agent/projects/distributed-agent-protocol/
+
+      The relay server is Node.js/TypeScript/Express+WebSocket. Existing files:
+        - src/relay/server.ts — main server (Express + WS)
+        - src/relay/rest-handler.ts — REST endpoints
+        - src/relay/agent-registry.ts — agent registration/heartbeat
+        - src/protocol/types.ts — TypeScript types
+        - contexts/dap-prov.json — existing JSON-LD context
+
+      Deliverables:
+      1. Add AgentCard type to src/protocol/types.ts:
+         - id (string, agent's unique ID)
+         - type: "AgentCard"
+         - name (string)
+         - description (string)
+         - capabilities (array of capability objects)
+         - version (string, DAP protocol version)
+         - protocolVersion (string)
+         - shimType (string, e.g. "mavis" | "claude-code" | "codex")
+         - endpoints (object: wssUrl, httpUrl, etc.)
+         - status ("active" | "inactive" | "busy")
+         - metadata (optional key-value pairs)
+         - @context (string, URL to JSON-LD context)
+      2. Create src/relay/agent-cards.ts:
+         - AgentCards class that wraps AgentRegistry
+         - toJsonLd(card: AgentCard): object — convert to JSON-LD with @context
+         - getCard(agentId: string): AgentCard | null
+         - listCards(filters?: {capability?, status?, shimType?}): AgentCard[]
+         - getCardByCapability(capability: string): AgentCard[]
+         - updateCard(agentId: string, partial: Partial<AgentCard>): void
+         - inject into AgentRegistry so registration auto-creates card
+      3. Add REST endpoints to src/relay/rest-handler.ts:
+         - GET /agents/:agentId/card → JSON-LD AgentCard (200 or 404)
+         - GET /agents?capability=<cap>&status=active → matching cards
+         - GET /.well-known/dap-agent-card → server's own agent card
+         - PATCH /agents/:agentId/card → update metadata/status
+      4. Create src/utils/agent-card-context.json — JSON-LD @context for agent cards
+         (extend existing contexts/dap-prov.json patterns)
+      5. Add unit tests in test/agent-cards.test.ts (15+ tests covering all methods and endpoints)
+      6. Update README.md with agent card usage docs (1 page)
+
+      Follow existing code patterns (logging, error handling, TypeScript strict mode).
+      JSON output must use structured logging. Tests must use temp dirs and not pollute state.
+      Report changed files and commit hash.
+    assigned_to: coder
+    verified_by: verifier
+    verify_prompt: |
+      Run `npm test -- --run` and confirm agent-cards tests pass. Read the new files
+      and verify: (1) JSON-LD @context properly included in card output, (2) capability
+      filtering works, (3) REST endpoints respond with correct HTTP status codes,
+      (4) integration with agent registry (registration creates card). Do NOT edit files.
+    timeout_ms: 2400000
+
+  # ── Track 2: SHACL Validation Hook in Server ──────────────────────────
+  - id: shacl-validation
+    title: 'Wire SHACL shapes into relay server validation pipeline'
+    prompt: |
+      Integrate the existing SHACL shapes into the DAP relay server validation pipeline:
+        /Users/anusornchaikaew/.minimax-agent/projects/distributed-agent-protocol/
+
+      Existing shapes (already created):
+        - shapes/agent-shape.ttl (agent registration)
+        - shapes/message-shape.ttl (DAP messages)
+        - shapes/job-shape.ttl (job records)
+      Existing code:
+        - src/relay/agent-registry.ts — AgentRegistry class
+        - src/relay/job-queue.ts — JobQueue class
+        - src/protocol/validation.ts — validateMessage, etc.
+        - src/protocol/types.ts — all TypeScript types
+      No RDF library is installed yet.
+
+      Deliverables:
+      1. Install RDF libraries: `npm install --save @rdfjs/fetcher rdf-data-model @rdfjs/parser-jsonld` (check what works with current Node version first)
+         - If RDF libraries are problematic, implement SHACL validation in TypeScript WITHOUT a triple store:
+           parse TTL manually (regex-based for the simple shapes), validate JSON objects directly
+         - Alternative: implement a lightweight SHACL-like validator that checks:
+           a) Required fields present
+           b) Field types match (string, integer, URI, etc.)
+           c) Regex patterns (e.g. IRI format)
+           d) Value ranges (e.g. non-negative integers)
+      2. Create src/validation/shacl-validator.ts:
+         - SHACLValidator class with validateAgent(data), validateMessage(data), validateJob(data)
+         - loadShapes() reads shapes/*.ttl and parses field constraints
+         - Each validateX() returns { valid: boolean, errors: ValidationError[] }
+         - ValidationError: { path: string, message: string, severity: "error" | "warning" }
+      3. Integrate into src/relay/agent-registry.ts:
+         - Register → validate with SHACL shapes → reject with 400 if invalid
+         - Keep existing validation (sanitize, format) alongside SHACL
+      4. Integrate into src/relay/job-queue.ts:
+         - submit → validate job shape → reject with 400 if invalid
+         - update → validate on status change
+      5. Integrate into src/relay/rest-handler.ts:
+         - All POST/PUT endpoints → validate before processing
+         - Return structured error response: { valid: false, errors: [...], shape: "agent-shape" }
+      6. Add unit tests in test/shacl-validator.test.ts (15+ tests):
+         - Valid agent registration passes
+         - Missing required fields → error
+         - Wrong field type → error
+         - Invalid URI format → error
+         - Valid message passes
+         - Valid job passes
+         - Error recovery (partial valid → report all errors)
+      7. Document in docs/SHACL-INTEGRATION.md (1 page, how validation works)
+
+      If RDF libraries are too heavy, use TypeScript-based field validation that mirrors SHACL semantics.
+      Tests must use temp dirs. Report changed files and commit hash.
+    assigned_to: coder
+    verified_by: verifier
+    verify_prompt: |
+      Run `npm test -- --run`. Confirm shacl-validator tests pass. Manually test:
+      (1) POST /agents with invalid data → 400 with structured errors
+      (2) POST /jobs with invalid data → 400 with structured errors
+      (3) Valid data → 201/200. Verify shapes/*.ttl are actually loaded (check logs).
+      Do NOT edit files.
+    timeout_ms: 2400000
+
+  # ── Track 3: Provenance Query API ─────────────────────────────────────
+  - id: provenance-query
+    title: 'Implement provenance query API for root-cause tracing'
+    prompt: |
+      Implement a Provenance Query API for the DAP relay server that lets clients trace
+      job execution and agent activity through the PROV-O provenance chain:
+        /Users/anusornchaikaew/.minimax-agent/projects/distributed-agent-protocol/
+
+      Existing provenance code:
+        - src/provenance/index.ts — ProvenanceGenerator (creates PROV-O records)
+        - src/relay/job-queue.ts — Job.provenance field, auto-generates on submit/claim/complete/fail
+        - src/relay/agent-registry.ts — Agent.provenance field, auto-generates on register/heartbeat
+        - contexts/dap-prov.json — JSON-LD context with PROV-O prefixes
+        - test/provenance.test.ts — 17 tests
+
+      ProvenanceRecord shape (already exists):
+        - entity (string, URI of the thing being described)
+        - activity (string, what happened)
+        - timestamp (ISO 8601 string)
+        - agentId (string)
+        - metadata (object)
+        - generatedAt (ISO 8601 string)
+
+      Deliverables:
+      1. Add to src/relay/job-queue.ts:
+         - getProvenance(jobId: string): ProvenanceRecord[] — trace all events for a job
+         - queryByAgent(agentId: string, from?: Date, to?: Date): ProvenanceRecord[]
+         - queryByActivity(activity: string, from?: Date, to?: Date): ProvenanceRecord[]
+         - getProvenanceStats(): { totalRecords, byActivity, byAgent, timeRange }
+      2. Add to src/relay/agent-registry.ts:
+         - getAgentProvenance(agentId: string): ProvenanceRecord[]
+         - getRegistrationChain(agentId: string): ProvenanceRecord[] (registration + heartbeats)
+      3. Add REST endpoints to src/relay/rest-handler.ts:
+         - GET /jobs/:jobId/provenance → array of ProvenanceRecord
+         - GET /jobs/:jobId/trace → human-readable trace (timeline format)
+         - GET /agents/:agentId/provenance → agent's provenance chain
+         - GET /provenance/stats → aggregate statistics
+         - GET /provenance?agentId=<id>&from=<date>&to=<date> → filtered query
+      4. Add to src/provenance/index.ts:
+         - ProvenanceQuery class for complex queries (trace, findRootCause, getActivityTimeline)
+         - trace(jobId: string): TraceStep[] — rebuild full execution timeline from provenance chain
+         - findRootCause(jobId: string): string — identify which step failed
+         - getActivityTimeline(agentId: string, range: DateRange): TimelineEvent[]
+      5. Add unit tests in test/provenance-query.test.ts (15+ tests):
+         - trace a job through submit → claim → complete (3 records)
+         - trace a failed job, find root cause identifies failure point
+         - query by agentId returns correct records
+         - query by date range filters correctly
+         - stats endpoint returns correct counts
+      6. Document in docs/PROVENANCE-QUERY.md (1 page, API usage examples)
+
+      Follow existing patterns. ProvenanceRecord is already JSON-serializable.
+      Trace output should be human-readable (timeline with timestamps + descriptions).
+      Report changed files and commit hash.
+    assigned_to: coder
+    verified_by: verifier
+    verify_prompt: |
+      Run `npm test -- --run`. Confirm provenance-query tests pass. Manually test:
+      (1) GET /jobs/:id/provenance → returns array with submit/claim/complete records
+      (2) GET /jobs/:id/trace → human-readable timeline
+      (3) GET /provenance/stats → non-zero stats
+      (4) Query with date range → filtered results. Do NOT edit files.
+    timeout_ms: 2400000
+
+  # ── Track 4: End-to-End Cross-Machine Integration Test ─────────────────
+  - id: e2e-integration
+    title: 'Run e2e cross-machine integration with two real agents'
+    prompt: |
+      Create and run an end-to-end integration test that proves two agents on different
+      "machines" (processes) can communicate through the DAP relay:
+        /Users/anusornchaikaew/.minimax-agent/projects/distributed-agent-protocol/
+
+      The relay server runs at http://localhost:3000 (or TLS at https://localhost:3443).
+      Shim adapters exist for mavis, claude-code, codex in src/shims/.
+
+      Deliverables:
+      1. Install cross-process testing capability:
+         - Already in devDeps: tsx, vitest
+         - Install: `npm install --save-dev concurrently` if not present
+      2. Create test/e2e/cross-machine.test.ts:
+         - Uses Node.js child_process.fork() to spawn two agent processes
+         - Process 1: starts as "agent-alpha" (logs in, registers with relay)
+         - Process 2: starts as "agent-beta" (logs in, registers with relay)
+         - Both use the DAPClient from src/client/ (or src/shims/ if available)
+         - Test: agent-alpha submits a job, agent-beta claims it, agent-beta completes it
+         - Verify: job status transitions correctly through all states
+         - Verify: agent-alpha can query job and see completion
+         - Verify: provenance chain has records for both agents
+         - Cleanup: kill both processes after test
+      3. Enhance scripts/test-cross-machine.sh:
+         - Add TLS mode test (ENABLE_TLS=true)
+         - Add multiple concurrent job test
+         - Add agent disconnect/reconnect test
+         - Make script output parsable (JSON summaries)
+      4. Create test/e2e/shacl-validation-e2e.test.ts:
+         - Test that invalid agent registration (missing required fields) → 400
+         - Test that invalid job submission → 400
+         - Test that valid registration then invalid update → 400
+         - Verify error responses include structured validation errors
+      5. Add test/e2e/provenance-e2e.test.ts:
+         - Test full job lifecycle → trace endpoint returns all records
+         - Test agent heartbeat → agent provenance updates
+         - Test cross-agent job → both agents' provenance in chain
+      6. Run all e2e tests and confirm they pass
+      7. Document in docs/E2E-TESTING.md (1 page, how to run tests, what they cover)
+
+      If relay server needs to be running, use concurrently to start it as part of test setup.
+      E2e tests should timeout after 60s max. Report test results (pass/fail counts).
+    assigned_to: coder
+    depends_on: [agent-cards, shacl-validation, provenance-query]
+    verified_by: verifier
+    verify_prompt: |
+      Run `npm test -- --run` and confirm all e2e tests pass. Inspect test output:
+      (1) Cross-machine test completes without timeout
+      (2) SHACL validation e2e correctly rejects invalid input with 400
+      (3) Provenance e2e confirms trace endpoint works end-to-end
+      (4) No orphaned processes after test run. Do NOT edit files.
+    timeout_ms: 3000000

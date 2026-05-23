@@ -1,0 +1,238 @@
+# =============================================================================
+# Job Shape — SHACL 1.1 Validation Shape for DAP Job Records
+# =============================================================================
+# Validates basic field types and formats for DAP Job records.
+# Cross-field conditional logic (claimed_by/result/error requirements,
+# timestamp ordering) is enforced in TypeScript job-queue.ts — not here.
+# See: https://www.w3.org/TR/shacl/ for SHACL 1.1 specification.
+# =============================================================================
+
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dap:  <https://dap-protocol.org/ns#> .
+
+# -----------------------------------------------------------------------------
+# Job Shape — Primary shape for Job node validation
+# Targets: all instances of dap:Job
+# -----------------------------------------------------------------------------
+dap:JobShape a sh:NodeShape ;
+  sh:targetClass dap:Job ;
+
+  # -------------------------------------------------------------------------
+  # 1. job_id — required, UUID pattern
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:job_id ;
+    sh:severity sh:Violation ;
+    sh:message "job_id is required and must be a valid UUID (e.g., '550e8400-e29b-41d4-a716-446655440000')" ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" ;
+    sh:datatype xsd:string ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 2. type — required, non-empty string
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:type ;
+    sh:severity sh:Violation ;
+    sh:message "type is required and must be a non-empty string (e.g., 'code-generation')" ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:minLength 1 ;
+    sh:datatype xsd:string ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 3. priority — required, integer 0-10
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:priority ;
+    sh:severity sh:Violation ;
+    sh:message "priority is required and must be an integer between 0 and 10" ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 10 ;
+    sh:datatype xsd:integer ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 4. submitter — required, non-empty string
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:submitter ;
+    sh:severity sh:Violation ;
+    sh:message "submitter is required and must be a non-empty string (agent_id)" ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:minLength 1 ;
+    sh:datatype xsd:string ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 5. capability_required — optional string
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:capability_required ;
+    sh:severity sh:Violation ;
+    sh:message "capability_required, if present, must be a string" ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:string ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 6. payload — required, non-empty object (blank or named node)
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:payload ;
+    sh:severity sh:Violation ;
+    sh:message "payload is required and must be a non-empty object" ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankOrNamedNode ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 7. constraints — optional object with optional fields
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:constraints ;
+    sh:severity sh:Violation ;
+    sh:message "constraints, if present, must be an object with valid constraint fields" ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankOrNamedNode ;
+    sh:property [
+      sh:path dap:maxDurationSeconds ;
+      sh:severity sh:Violation ;
+      sh:message "maxDurationSeconds, if present, must be a positive integer" ;
+      sh:minExclusive 0 ;
+      sh:datatype xsd:integer ;
+    ] ;
+    sh:property [
+      sh:path dap:memoryLimitMB ;
+      sh:severity sh:Violation ;
+      sh:message "memoryLimitMB, if present, must be a positive integer" ;
+      sh:minExclusive 0 ;
+      sh:datatype xsd:integer ;
+    ] ;
+    sh:property [
+      sh:path dap:preferredAgent ;
+      sh:severity sh:Violation ;
+      sh:message "preferredAgent, if present, must be a string" ;
+      sh:datatype xsd:string ;
+    ] ;
+    sh:property [
+      sh:path dap:tags ;
+      sh:severity sh:Violation ;
+      sh:message "tags, if present, must be an array of non-empty strings" ;
+      sh:nodeKind sh:BlankOrNamedNode ;
+      sh:eachNode [
+        sh:severity sh:Violation ;
+        sh:message "Each tag must be a non-empty string" ;
+        sh:minLength 1 ;
+        sh:datatype xsd:string ;
+      ] ;
+    ] ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 8. status — required, one of 6 valid statuses
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:status ;
+    sh:severity sh:Violation ;
+    sh:message "status is required and must be one of: pending, claimed, in-progress, completed, failed, cancelled" ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in (
+      "pending"^^xsd:string
+      "claimed"^^xsd:string
+      "in-progress"^^xsd:string
+      "completed"^^xsd:string
+      "failed"^^xsd:string
+      "cancelled"^^xsd:string
+    ) ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 9. claimed_by — optional string
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:claimed_by ;
+    sh:severity sh:Violation ;
+    sh:message "claimed_by, if present, must be a string" ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:string ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 10. result — optional (blank or named node)
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:result ;
+    sh:severity sh:Violation ;
+    sh:message "result, if present, must be an object" ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankOrNamedNode ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 11. error — optional string
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:error ;
+    sh:severity sh:Violation ;
+    sh:message "error, if present, must be a string" ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:string ;
+  ] ;
+
+# -------------------------------------------------------------------------
+  # 12. created_at — optional, xsd:dateTime
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:created_at ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:dateTime ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 13. started_at — optional xsd:dateTime
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:started_at ;
+    sh:severity sh:Violation ;
+    sh:message "started_at, if present, must be a valid xsd:dateTime" ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:dateTime ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 14. completed_at — optional xsd:dateTime
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:completed_at ;
+    sh:severity sh:Violation ;
+    sh:message "completed_at, if present, must be a valid xsd:dateTime" ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:dateTime ;
+  ] ;
+
+  # -------------------------------------------------------------------------
+  # 15. provenance — optional PROV-O JSON-LD record (blank or named node)
+  # -------------------------------------------------------------------------
+  sh:property [
+    sh:path dap:provenance ;
+    sh:severity sh:Violation ;
+    sh:message "provenance, if present, must be a valid PROV-O JSON-LD record" ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankOrNamedNode ;
+  ] .
+
+# =============================================================================
+# End of Job Shape
+# =============================================================================

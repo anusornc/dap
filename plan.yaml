@@ -1,0 +1,262 @@
+version: 1
+plan:
+  name: 'DAP SHACL validation shapes (Phase 2)'
+  max_concurrency: 10
+  max_consecutive_failures: 2
+  max_cycles: 10
+tasks:
+  - id: agent-shape
+    title: 'Agent registration shape (agent-shape.ttl)'
+    prompt: |
+      Create `shapes/agent-shape.ttl` — a SHACL 1.1 shape file to validate DAP agent registrations.
+
+      **Context:** DAP (Distributed Agent Protocol) agents register with the relay server. The Agent Card looks like:
+      ```json
+      {
+        "agent_id": "mavis-001",
+        "capabilities": ["code-generation", "document-creation"],
+        "capabilityDetails": [
+          { "name": "code-generation", "version": "1.0.0", "maxConcurrent": 3 }
+        ],
+        "os": "darwin",
+        "version": "1.0.0",
+        "metadata": {}
+      }
+      ```
+
+      **Validation requirements:**
+      1. `agent_id` — required, non-empty string, pattern `^[a-zA-Z0-9_-]+$`
+      2. `capabilities` — required, at least 1 item, each item must be a non-empty string
+      3. `capabilityDetails` — optional array, if present each item must have:
+         - `name` (required, string)
+         - `version` (optional, must match semver pattern `^\d+\.\d+\.\d+`)
+         - `maxConcurrent` (optional, positive integer, default 1)
+      4. `os` — optional string, should be one of: darwin, linux, windows, unknown
+      5. `version` — optional semver string
+      6. `metadata` — optional JSON object
+
+      **SHACL structure:** Use `sh:NodeShape` for the root, `sh:PropertyShape` for each field.
+      Include `sh:message` with human-readable error messages.
+      Include `sh:severity` — use `sh:Violation` for required fields, `sh:Warning` for optional.
+
+      **Namespace prefixes:**
+      ```turtle
+      @prefix sh:   <http://www.w3.org/ns/shacl#> .
+      @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+      @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+      @prefix dap:  <https://dap-protocol.org/ns#> .
+      @prefix schema: <https://schema.org/> .
+      ```
+
+      **Output:** Write to `/Users/anusornchaikaew/.minimax-agent/projects/distributed-agent-protocol/shapes/agent-shape.ttl`
+      Create the `shapes/` directory if it doesn't exist.
+
+      Use Turtle (`.ttl`) format. Follow SHACL 1.1 Core specification.
+    assigned_to: coder
+    verified_by: verifier
+    verify_prompt: |
+      Verify the SHACL shape file is valid Turtle syntax and follows SHACL 1.1 Core spec.
+      Check:
+      1. All prefix declarations are correct
+      2. Shape uses sh:NodeShape or sh:PropertyShape correctly
+      3. Constraint components (sh:minCount, sh:pattern, sh:datatype, etc.) are valid
+      4. Error messages are helpful and in English
+      5. Target declaration correctly matches the agent registration structure
+
+      Do NOT modify files. Report any issues found.
+    timeout_ms: 600000
+
+  - id: message-shape
+    title: 'DAP message validation shape (message-shape.ttl)'
+    prompt: |
+      Create `shapes/message-shape.ttl` — a SHACL 1.1 shape file to validate DAP protocol messages.
+
+      **Context:** DAP messages have this structure:
+      ```json
+      {
+        "version": "1.0.0",
+        "msg_id": "uuid-string",
+        "timestamp": "2026-05-21T10:00:00Z",
+        "from": { "agent_id": "mavis-001", "capabilities": [] },
+        "to": { "agent_id": "receiver-001" },
+        "action": "request",
+        "payload": {
+          "type": "task-delegation",
+          "data": { "task": "code-generation", "params": {} }
+        },
+        "reply_to": "optional-uuid"
+      }
+      ```
+
+      **Validation requirements:**
+      1. `version` — required, must be literal "1.0.0"
+      2. `msg_id` — required, must match UUID pattern
+      3. `timestamp` — required, must be valid xsd:dateTime
+      4. `from` — required object with `agent_id` (required) and `capabilities` (optional array)
+      5. `to` — required, one of: {agent_id}, {capability}, {topic}, or literal "broadcast"
+      6. `action` — required, must be one of: request, response, stream, event, job-submission, job-claim, job-complete, job-progress, job-cancel, capability-query, capability-update, heartbeat, error
+      7. `payload` — required object with `type` (string) and `data` (object)
+      8. `reply_to` — optional UUID
+
+      **Namespace prefixes:**
+      ```turtle
+      @prefix sh:   <http://www.w3.org/ns/shacl#> .
+      @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+      @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+      @prefix dap:  <https://dap-protocol.org/ns#> .
+      ```
+
+      **Output:** Write to `/Users/anusornchaikaew/.minimax-agent/projects/distributed-agent-protocol/shapes/message-shape.ttl`
+
+      Use Turtle (`.ttl`) format. Include helpful error messages.
+    assigned_to: coder
+    verified_by: verifier
+    verify_prompt: |
+      Verify the SHACL shape file is valid Turtle syntax and follows SHACL 1.1 Core spec.
+      Check:
+      1. All prefix declarations are correct
+      2. Shape uses sh:NodeShape or sh:PropertyShape correctly
+      3. Constraint components (sh:in, sh:pattern, sh:datatype, etc.) are valid
+      4. Error messages are helpful
+      5. Target declaration correctly matches the message structure
+
+      Do NOT modify files. Report any issues found.
+    timeout_ms: 600000
+
+  - id: job-shape
+    title: 'Job metadata validation shape (job-shape.ttl)'
+    prompt: |
+      Create `shapes/job-shape.ttl` — a SHACL 1.1 shape file to validate DAP job records.
+
+      **Context:** DAP jobs have this structure (TypeScript interface):
+      ```typescript
+      interface Job {
+        job_id: string;           // UUID
+        type: string;             // e.g., "code-generation"
+        priority: number;         // 0-10
+        submitter: string;        // agent_id
+        capability_required?: string;
+        payload: Record<string, unknown>;
+        constraints?: {
+          maxDurationSeconds?: number;
+          memoryLimitMB?: number;
+          preferredAgent?: string;
+          tags?: string[];
+        };
+        status: 'pending' | 'claimed' | 'in-progress' | 'completed' | 'failed' | 'cancelled';
+        claimed_by?: string;
+        result?: unknown;
+        error?: string;
+        created_at: string;       // ISO timestamp
+        started_at?: string;      // ISO timestamp
+        completed_at?: string;   // ISO timestamp
+        provenance?: ProvenanceRecord;  // PROV-O JSON-LD
+      }
+      ```
+
+      **Validation requirements:**
+      1. `job_id` — required, UUID pattern
+      2. `type` — required, non-empty string
+      3. `priority` — required, integer 0-10
+      4. `submitter` — required, non-empty string
+      5. `capability_required` — optional string
+      6. `payload` — required, non-empty object
+      7. `constraints` — optional object with optional fields:
+         - `maxDurationSeconds`: positive integer
+         - `memoryLimitMB`: positive integer
+         - `preferredAgent`: string
+         - `tags`: array of non-empty strings
+      8. `status` — required, one of the 6 valid statuses
+      9. `claimed_by` — optional string (required if status is claimed/in-progress/completed/failed)
+      10. `result` — optional (required if status is completed)
+      11. `error` — optional string (required if status is failed/cancelled)
+      12. `created_at` — required, xsd:dateTime
+      13. `started_at` — optional xsd:dateTime (must be >= created_at if both present)
+      14. `completed_at` — optional xsd:dateTime (must be >= started_at if present)
+
+      **Namespace prefixes:**
+      ```turtle
+      @prefix sh:   <http://www.w3.org/ns/shacl#> .
+      @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+      @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+      @prefix dap:  <https://dap-protocol.org/ns#> .
+      ```
+
+      **Output:** Write to `/Users/anusornchaikaew/.minimax-agent/projects/distributed-agent-protocol/shapes/job-shape.ttl`
+
+      Use Turtle (`.ttl`) format. Include helpful error messages in English.
+    assigned_to: coder
+    verified_by: verifier
+    verify_prompt: |
+      Verify the SHACL shape file is valid Turtle syntax and follows SHACL 1.1 Core spec.
+      Check:
+      1. All prefix declarations are correct
+      2. Shape uses sh:NodeShape or sh:PropertyShape correctly
+      3. Constraint components are valid (sh:minInclusive, sh:maxInclusive, sh:in, etc.)
+      4. Error messages are helpful
+      5. Target declaration correctly matches the job structure
+
+      Do NOT modify files. Report any issues found.
+    timeout_ms: 600000
+
+  - id: integration-test
+    title: 'SHACL shapes integration test'
+    prompt: |
+      Create a test file `test/shacl-validation.test.ts` that validates the SHACL shapes work correctly.
+
+      **Test requirements:**
+      1. Create test cases for each shape (agent-shape, message-shape, job-shape)
+      2. Test valid data that should pass
+      3. Test invalid data that should fail with specific error messages
+      4. Use a SHACL validator. Options for Node.js:
+         - Use `pyshacl` Python package (pip install pyshacl) via child_process
+         - Or use `@rdfjs/validate` NPM package if available
+         - Or create mock validation functions that check the key constraints
+
+      **If using pyshacl CLI:**
+      ```bash
+      pip install pyshacl
+      pyshacl -s shapes/agent-shape.ttl -s shapes/message-shape.ttl -s shapes/job-shape.ttl data.ttl
+      ```
+
+      **Key test cases for agent-shape:**
+      - Valid agent → pass
+      - Missing agent_id → fail with specific message
+      - Invalid agent_id pattern → fail
+      - Empty capabilities → fail
+      - Invalid version format → fail
+
+      **Key test cases for message-shape:**
+      - Valid message → pass
+      - Missing version → fail
+      - Invalid timestamp → fail
+      - Invalid action value → fail
+      - Invalid to field format → fail
+
+      **Key test cases for job-shape:**
+      - Valid job → pass
+      - Invalid priority (<0 or >10) → fail
+      - Missing required fields → fail
+      - Invalid status value → fail
+      - completed_at before started_at → fail
+
+      **Output:** Write to `/Users/anusornchaikaew/.minimax-agent/projects/distributed-agent-protocol/test/shacl-validation.test.ts`
+
+      Make tests pass with `npm test -- --run`. Report test results.
+    assigned_to: coder
+    depends_on: [agent-shape, message-shape, job-shape]
+    verified_by: verifier
+    verify_prompt: |
+      Verify the SHACL validation tests are comprehensive and pass.
+      Run `npm test -- --run test/shacl-validation.test.ts`
+      Check:
+      1. All test cases cover the key validation rules
+      2. Tests fail appropriately for invalid data
+      3. Tests pass for valid data
+      4. Error messages are helpful
+
+      Do NOT modify files. Report any issues found.
+    timeout_ms: 600000
