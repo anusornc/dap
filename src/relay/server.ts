@@ -17,9 +17,14 @@ import { RESTHandler } from './rest-handler.js';
 import { RelayConfig, MessageAction } from '../protocol/types.js';
 import { validateMessage, sanitizeAgentId } from '../protocol/validation.js';
 import { v4 as uuidv4 } from 'uuid';
+import { wsConnections, connectedAgents } from '../utils/metrics.js';
+// Note: metrics.ts is imported implicitly via the metrics singletons
+// Default metrics (CPU, memory) are collected via collectDefaultMetrics() in metrics.ts
 
 // Load environment
 config();
+
+console.log('[Relay] Prometheus metrics enabled - default metrics collected');
 
 const DEFAULT_CONFIG: Partial<RelayConfig> = {
   port: parseInt(process.env.PORT || '3000'),
@@ -166,6 +171,10 @@ export class RelayServer {
 
       console.log(`[Relay] New WebSocket connection`);
 
+      // Update metrics
+      wsConnections.inc();
+      connectedAgents.inc();
+
       socket.on('message', (data) => {
         try {
           const raw = JSON.parse(data.toString());
@@ -195,6 +204,9 @@ export class RelayServer {
           console.log(`[Relay] Agent disconnected: ${agent.agentId}`);
           this.registry.unregister(agent.agentId);
         }
+        // Update metrics
+        wsConnections.dec();
+        connectedAgents.dec();
       });
 
       socket.on('error', (err) => {

@@ -10,6 +10,11 @@ import {
   MessageAction,
 } from '../protocol/types.js';
 import { AgentRegistry } from './agent-registry.js';
+import {
+  messagesTotal,
+  messageSize,
+  wsConnections,
+} from '../utils/metrics.js';
 
 export interface WSHandlerConfig {
   heartbeatIntervalMs: number;
@@ -59,6 +64,9 @@ export class WSHandler {
     const connectionId = uuidv4();
     console.log(`[WS] New connection: ${connectionId}`);
 
+    // Update metrics
+    wsConnections.inc();
+
     // Set up heartbeat
     this.startHeartbeat(socket, connectionId);
 
@@ -67,6 +75,11 @@ export class WSHandler {
       try {
         const raw = JSON.parse(data.toString());
         const msg = raw as DAPMessage;
+
+        // Record message metrics
+        const action = msg.action || 'unknown';
+        messagesTotal.labels(action, 'in').inc();
+        messageSize.observe(data.length);
 
         if (!msg.action) {
           this.sendError(socket, 'Invalid message format', 'Missing action');
@@ -276,7 +289,12 @@ export class WSHandler {
 
   private send(socket: any, msg: DAPMessage): void {
     if (socket.readyState === 1) { // OPEN
-      socket.send(JSON.stringify(msg));
+      const msgStr = JSON.stringify(msg);
+      socket.send(msgStr);
+      // Record outgoing message metrics
+      const action = msg.action || 'unknown';
+      messagesTotal.labels(action, 'out').inc();
+      messageSize.observe(Buffer.byteLength(msgStr, 'utf8'));
     }
   }
 
@@ -339,6 +357,9 @@ export class WSHandler {
       console.log(`[WS] Agent disconnected: ${agent.agentId}`);
       this.registry.unregister(agent.agentId);
     }
+
+    // Update metrics
+    wsConnections.dec();
 
     // Clear heartbeat interval
     const interval = this.heartbeatIntervals.get(socket);

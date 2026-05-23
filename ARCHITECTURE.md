@@ -262,6 +262,19 @@ distributed-agent-protocol/
 ├── README.md
 ├── package.json
 ├── tsconfig.json
+├── Dockerfile               # Multi-stage production build
+├── docker-compose.yml        # Full monitoring stack
+├── scripts/
+│   └── deploy.sh             # Docker deployment automation
+├── docker/
+│   ├── prometheus/
+│   │   ├── prometheus.yml    # Scrape targets
+│   │   └── alerting-rules.yml # 5 alert rules
+│   ├── grafana/
+│   │   └── provisioning/     # Dashboards + datasource
+│   └── alertmanager/
+│       ├── alertmanager.yml  # Email + Slack routing
+│       └── entrypoint.sh     # Env var expansion
 ├── src/
 │   ├── protocol/
 │   │   ├── types.ts          # Type definitions
@@ -273,20 +286,13 @@ distributed-agent-protocol/
 │   │   ├── rest-handler.ts  # REST endpoints
 │   │   ├── agent-registry.ts # Connected agents
 │   │   └── job-queue.ts      # Task board implementation
-│   ├── shims/
-│   │   ├── base.ts          # Shim interface
-│   │   ├── mavis.ts         # Mavis adapter
-│   │   ├── codex.ts         # Codex adapter
-│   │   └── claude-code.ts   # Claude Code adapter
-│   ├── client/
-│   │   └── dap-client.ts    # Client library
-│   └── utils/
-│       ├── logger.ts
-│       └── crypto.ts
-├── examples/
-│   ├── simple-chat/         # Two agents chatting
-│   ├── code-review/        # Delegating code review
-│   └── job-queue/           # Async job submission
+│   ├── utils/
+│   │   └── metrics.ts        # Prometheus metrics (20+ metrics)
+│   └── shims/
+│       ├── base.ts          # Shim interface
+│       ├── mavis.ts         # Mavis adapter
+│       ├── codex.ts         # Codex adapter
+│       └── claude-code.ts   # Claude Code adapter
 ├── test/
 │   ├── protocol.test.ts
 │   ├── relay.test.ts
@@ -354,6 +360,26 @@ npm run shim:claude -- --relay ws://your-server:3000/ws --api-key your-key
 - [ ] Streaming responses (SSE)
 - [ ] File transfer protocol
 - [ ] GraphQL interface
+
+## 11. Monitoring
+
+The relay server exposes a `/metrics` endpoint (Prometheus format) with 20+ metrics covering jobs, agents, messages, and HTTP requests.
+
+### Docker Compose Stack
+
+```
+dap-relay ──────────► prometheus ──────────► grafana (dashboards)
+                     ▲                      ▲
+                     └──────── alertmanager ┘
+                           └───► email + Slack
+node-exporter ──────────────────────────────► prometheus
+```
+
+**Services:** DAP relay, Prometheus, Grafana, Alertmanager, Node Exporter.
+
+**Dashboards:** Job Pipeline, Agent Activity, System metrics.
+
+**Alerting:** 5 Prometheus rules (error rate, queue depth, agent offline, relay down, job latency). Alertmanager routes to email and Slack via env vars (`SMTP_*`, `SLACK_WEBHOOK_URL`).
 
 ---
 

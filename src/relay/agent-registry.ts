@@ -7,6 +7,12 @@
 import { Capability, AgentInfo, AgentProvenance } from '../protocol/types.js';
 import { ProvenanceGenerator } from '../provenance/index.js';
 import { SHACLValidator } from '../validation/shacl-validator.js';
+import {
+  activeAgents,
+  agentsRegistered,
+  agentHeartbeats,
+  staleAgents,
+} from '../utils/metrics.js';
 
 /**
  * Simplified ProvenanceRecord for agent provenance queries
@@ -111,6 +117,11 @@ export class AgentRegistry {
       this.capabilityIndex.get(cap.name)!.add(agentId);
     }
 
+    // Update metrics
+    const shimType = (agentInfo as any).shimType || 'unknown';
+    activeAgents.labels(shimType).inc();
+    agentsRegistered.inc();
+
     console.log(`[AgentRegistry] Agent registered: ${agentId} with ${capabilities.length} capabilities`);
     return { agent, valid: true };
   }
@@ -130,6 +141,10 @@ export class AgentRegistry {
         this.capabilityIndex.delete(cap);
       }
     }
+
+    // Update metrics
+    const shimType = (agent.agentInfo as any).shimType || 'unknown';
+    activeAgents.labels(shimType).dec();
 
     this.agents.delete(agentId);
   }
@@ -198,6 +213,9 @@ export class AgentRegistry {
     } else {
       this.heartbeatHistory.set(agentId, [{ timestamp: timestamp.toISOString() }]);
     }
+
+    // Update metrics
+    agentHeartbeats.inc();
     
     return true;
   }
@@ -211,6 +229,9 @@ export class AgentRegistry {
         stale.push(agent);
       }
     }
+
+    // Update stale agents gauge
+    staleAgents.set(stale.length);
 
     return stale;
   }

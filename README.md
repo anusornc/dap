@@ -299,6 +299,72 @@ Invalid API key attempts are logged with:
 - HTTP method
 - Partial key (first 4 characters masked)
 
+## Monitoring
+
+The DAP relay server includes built-in Prometheus metrics instrumentation for production monitoring.
+
+### Metrics Endpoint
+
+```bash
+curl http://localhost:3000/metrics
+```
+
+Returns Prometheus-format metrics including:
+- `dap_jobs_submitted_total` — jobs submitted by type and priority
+- `dap_jobs_completed_total` / `dap_failed_total` / `cancelled_total`
+- `dap_pending_jobs` — current queue depth by type
+- `dap_active_agents` — connected agents by shim type
+- `dap_agent_heartbeats_total` — heartbeat count
+- `dap_ws_connections` — current WebSocket connections
+- `dap_messages_total` — messages by action and direction
+- `dap_requests_total` — HTTP requests by method, path, and status
+- `dap_request_duration_seconds` — request latency histogram
+- `dap_errors_total` — errors by type and endpoint
+
+### Docker Monitoring Stack
+
+A full monitoring stack is provided via Docker Compose:
+
+```bash
+# Start all services (relay + Prometheus + Grafana + Alertmanager + Node Exporter)
+./scripts/deploy.sh start
+
+# View service logs
+./scripts/deploy.sh logs
+
+# Stop all services
+./scripts/deploy.sh stop
+```
+
+**Ports:**
+| Service | Port | Description |
+|---------|------|-------------|
+| DAP Relay | 3000 | Main relay server |
+| Grafana | 3001 | Dashboards (admin/admin) |
+| Prometheus | 9090 | Metrics scrape target |
+| Alertmanager | 9093 | Alert routing |
+| Node Exporter | 9100 | Host metrics |
+
+**Grafana Dashboards:**
+- **DAP Job Pipeline** — job throughput, queue depth, completion rate, p95 latency, priority distribution
+- **DAP Agents** — active agents, registrations, heartbeats, stale agents
+- **DAP System** — HTTP request rate, error rate, rate-limited requests, WebSocket connections
+
+**Alerting Rules (Prometheus):**
+| Alert | Severity | Condition |
+|-------|----------|-----------|
+| `dap_high_error_rate` | critical | Error rate > 5% over 5min |
+| `dap_relay_down` | critical | Relay target down > 1min |
+| `dap_queue_depth_high` | warning | Pending jobs > 50 over 5min |
+| `dap_agent_offline` | warning | No heartbeat > 2min |
+| `dap_job_latency_high` | warning | p95 job latency > 300s over 5min |
+
+**Email + Slack Alerts:** Alertmanager routes to email and Slack via env vars in `.env`:
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_EMAIL_TO`
+- `SLACK_WEBHOOK_URL`
+
+See `docker/.env.example` for all required variables.
+
 ## Documentation
 
 | Document | Description |

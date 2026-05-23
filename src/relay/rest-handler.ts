@@ -12,6 +12,13 @@ import { logInvalidKeyAttempt } from '../protocol/validation.js';
 import { JobStatus, AgentCardStatus } from '../protocol/types.js';
 import { restLogger, metricsCollector } from '../utils/logger.js';
 import { ProvenanceQuery } from '../provenance/index.js';
+import {
+  requestsTotal,
+  requestDuration,
+  errorsTotal,
+  rateLimited,
+  register,
+} from '../utils/metrics.js';
 
 export interface RESTHandlerConfig {
   apiKeys: string[];
@@ -111,6 +118,9 @@ export class RESTHandler {
       res.setHeader('X-RateLimit-Reset', rateLimit.resetAt.toString());
 
       if (!rateLimit.allowed) {
+        // Update rate limit metrics
+        rateLimited.inc();
+
         return res.status(429).json({
           error: 'Rate limit exceeded',
           retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
@@ -145,7 +155,16 @@ export class RESTHandler {
       // Log response on finish
       res.on('finish', () => {
         const duration = Date.now() - startTime;
+        const durationSeconds = duration / 1000;
+
+        // Update metrics
+        const path = req.route?.path || req.path;
+        requestsTotal.labels(req.method, path, res.statusCode.toString()).inc();
+        requestDuration.labels(req.method, path).observe(durationSeconds);
+
+        // Legacy metrics collector
         metricsCollector.recordRequest(duration);
+
         restLogger.info('Request completed', {
           requestId,
           method: req.method,
@@ -333,6 +352,8 @@ export class RESTHandler {
       const { type, priority, capability, payload, constraints, timeoutSeconds } = req.body;
 
       if (!type || !payload) {
+        // Update validation error metrics
+        errorsTotal.labels('validation', '/jobs').inc();
         res.status(400).json({ error: 'type and payload are required' });
         return;
       }
@@ -604,48 +625,15 @@ export class RESTHandler {
       });
     });
 
-    // ============ Metrics (Prometheus-style) ============
+    // ============ Metrics (Prometheus) ============
 
-    this.app.get('/metrics', (_req: Request, res: Response) => {
-      const jobStats = this.jobQueue.getStats();
-      const metrics = metricsCollector.getMetrics(jobStats.byStatus, this.registry.getAll().length);
-
-      // Prometheus text format
-      const lines: string[] = [
-        '# HELP dap_connected_agents Number of connected agents',
-        '# TYPE dap_connected_agents gauge',
-        `dap_connected_agents ${metrics.connectedAgents}`,
-        '',
-        '# HELP dap_uptime_seconds Server uptime in seconds',
-        '# TYPE dap_uptime_seconds gauge',
-        `dap_uptime_seconds ${metrics.uptime}`,
-        '',
-        '# HELP dap_memory_rss_bytes Memory RSS in bytes',
-        '# TYPE dap_memory_rss_bytes gauge',
-        `dap_memory_rss_bytes ${metrics.memoryUsage.rss}`,
-        '',
-        '# HELP dap_jobs_total Total number of jobs by status',
-        '# TYPE dap_jobs_total gauge',
-      ];
-
-      for (const [status, count] of Object.entries(jobStats.byStatus)) {
-        lines.push(`dap_jobs_total{status="${status}"} ${count}`);
+    this.app.get('/metrics', async (_req: Request, res: Response) => {
+      try {
+        res.set('Content-Type', register.contentType);
+        res.send(await register.metrics());
+      } catch (err) {
+        res.status(500).send(String(err));
       }
-
-      lines.push('');
-      lines.push('# HELP dap_requests_total Total number of requests');
-      lines.push('# TYPE dap_requests_total counter');
-      lines.push(`dap_requests_total ${metrics.requestsTotal}`);
-
-      lines.push('');
-      lines.push('# HELP dap_request_duration_seconds Request duration percentiles');
-      lines.push('# TYPE dap_request_duration_seconds histogram');
-      lines.push(`dap_request_duration_seconds{p50="true"} ${metrics.requestsDuration[0] / 1000}`);
-      lines.push(`dap_request_duration_seconds{p95="true"} ${metrics.requestsDuration[1] / 1000}`);
-      lines.push(`dap_request_duration_seconds{p99="true"} ${metrics.requestsDuration[2] / 1000}`);
-
-      res.set('Content-Type', 'text/plain; charset=utf-8');
-      res.send(lines.join('\n'));
     });
   }
 

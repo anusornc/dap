@@ -13,6 +13,17 @@ import { ProvenanceGenerator } from '../provenance/index.js';
 import { Job, JobStatus, JobConstraints } from '../protocol/types.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import {
+  jobsSubmitted,
+  jobsClaimed,
+  jobsCompleted,
+  jobsFailed,
+  jobsCancelled,
+  pendingJobs,
+  claimedJobs,
+  inProgressJobs,
+  jobDuration,
+} from '../utils/metrics.js';
 
 // Shared provenance generator instance
 const provenance = new ProvenanceGenerator();
@@ -204,6 +215,10 @@ export class JobQueue {
     this.indexJob(job);
     this.scheduleSave();
 
+    // Update metrics
+    jobsSubmitted.inc({ type, priority: priority.toString() });
+    pendingJobs.labels(type).inc();
+
     return job;
   }
 
@@ -238,6 +253,11 @@ export class JobQueue {
 
     this.scheduleSave();
 
+    // Update metrics
+    jobsClaimed.inc();
+    pendingJobs.labels(job.type).dec();
+    claimedJobs.inc();
+
     return job;
   }
 
@@ -249,6 +269,10 @@ export class JobQueue {
 
     job.status = JobStatus.IN_PROGRESS;
     this.scheduleSave();
+
+    // Update metrics
+    claimedJobs.dec();
+    inProgressJobs.inc();
 
     return job;
   }
@@ -290,6 +314,12 @@ export class JobQueue {
 
     this.scheduleSave();
 
+    // Update metrics
+    jobsCompleted.inc();
+    inProgressJobs.dec();
+    const durationSeconds = (Date.now() - new Date(job.created_at).getTime()) / 1000;
+    jobDuration.observe(durationSeconds);
+
     return job;
   }
 
@@ -315,6 +345,12 @@ export class JobQueue {
 
     this.scheduleSave();
 
+    // Update metrics
+    jobsFailed.inc();
+    inProgressJobs.dec();
+    const durationSeconds = (Date.now() - new Date(job.created_at).getTime()) / 1000;
+    jobDuration.observe(durationSeconds);
+
     return job;
   }
 
@@ -328,10 +364,23 @@ export class JobQueue {
       return null;
     }
 
+    // Track previous status for metrics
+    const prevStatus = job.status;
+
     job.status = JobStatus.CANCELLED;
     job.error = reason || 'Cancelled by submitter';
     job.completed_at = new Date().toISOString();
     this.scheduleSave();
+
+    // Update metrics
+    jobsCancelled.inc();
+    if (prevStatus === JobStatus.PENDING) {
+      pendingJobs.labels(job.type).dec();
+    } else if (prevStatus === JobStatus.CLAIMED) {
+      claimedJobs.dec();
+    } else if (prevStatus === JobStatus.IN_PROGRESS) {
+      inProgressJobs.dec();
+    }
 
     return job;
   }

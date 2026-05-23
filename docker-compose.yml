@@ -1,0 +1,122 @@
+# =============================================================================
+# Distributed Agent Protocol (DAP) - Docker Configuration
+# =============================================================================
+
+# DAP Relay Service
+dap-relay:
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      PORT: ${PORT:-3000}
+      TLS_PORT: ${TLS_PORT:-3443}
+  container_name: dap-relay
+  env_file:
+    - .env
+  ports:
+    - "${PORT:-3000}:${PORT:-3000}"
+    - "${TLS_PORT:-3443}:${TLS_PORT:-3443}"
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:${PORT:-3000}/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 10s
+  restart: unless-stopped
+  networks:
+    - dap-net
+
+# Prometheus Metrics Collection
+prometheus:
+  image: prom/prometheus:v2.52.0
+  container_name: dap-prometheus
+  command:
+    - '--config.file=/etc/prometheus/prometheus.yml'
+    - '--storage.tsdb.path=/prometheus'
+    - '--web.console.libraries=/usr/share/prometheus/consoles'
+    - '--web.console.templates=/usr/share/prometheus/consoles'
+    - '--web.enable-lifecycle'
+  ports:
+    - "${PROMETHEUS_PORT:-9090}:9090"
+  volumes:
+    - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    - ./docker/prometheus/alerting-rules.yml:/etc/prometheus/alerting-rules.yml:ro
+    - prometheus-data:/prometheus
+  restart: unless-stopped
+  networks:
+    - dap-net
+
+# Grafana Dashboard and Visualization
+grafana:
+  image: grafana/grafana:latest
+  container_name: dap-grafana
+  environment:
+    - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    - GF_SECURITY_ADMIN_USER=admin
+    - GF_USERS_ALLOW_SIGN_UP=false
+    - GF_SERVER_ROOT_URL=http://localhost:${GRAFANA_PORT:-3001}
+    - GF_SERVER_SERVE_FROM_SUB_PATH=true
+  ports:
+    - "${GRAFANA_PORT:-3001}:3000"
+  volumes:
+    - grafana-data:/var/lib/grafana
+    - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+  restart: unless-stopped
+  networks:
+    - dap-net
+  depends_on:
+    - prometheus
+
+# Node Exporter (Host Metrics)
+node-exporter:
+  image: prom/node-exporter:latest
+  container_name: dap-node-exporter
+  command:
+    - '--path.procfs=/host/proc'
+    - '--path.sysfs=/host/sys'
+    - '--path.rootfs=/rootfs'
+    - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+  ports:
+    - "9100:9100"
+  restart: unless-stopped
+  networks:
+    - dap-net
+  volumes:
+    - /proc:/host/proc:ro
+    - /sys:/host/sys:ro
+    - /:/rootfs:ro
+
+# Alertmanager (Alert Routing)
+alertmanager:
+  image: prom/alertmanager:latest
+  container_name: dap-alertmanager
+  command:
+    - '--config.file=/etc/alertmanager/alertmanager.yml'
+    - '--storage.path=/alertmanager'
+  ports:
+    - "${ALERTMANAGER_PORT:-9093}:9093"
+  volumes:
+    - ./docker/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    - ./docker/alertmanager/alertmanager.yml.template:/etc/alertmanager/alertmanager.yml.template:ro
+    - alertmanager-data:/alertmanager
+  entrypoint: /entrypoint.sh
+  command:
+    - '--config.file=/etc/alertmanager/alertmanager.yml'
+    - '--storage.path=/alertmanager'
+  env_file:
+    - .env
+  restart: unless-stopped
+  networks:
+    - dap-net
+
+# Networks
+networks:
+  dap-net:
+    driver: bridge
+
+# Volumes
+volumes:
+  prometheus-data:
+  grafana-data:
+  alertmanager-data:

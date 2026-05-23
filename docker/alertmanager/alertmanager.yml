@@ -1,0 +1,33 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: 'email+slack'
+  group_by: ['alertname']
+  group_wait: 30s
+  group_interval: 10m
+  repeat_interval: 4h
+
+receivers:
+  - name: 'email+slack'
+    email_configs:
+      - send_resolved: true
+        smarthost: "${SMTP_HOST}:${SMTP_PORT}"
+        auth_username: "${SMTP_USER}"
+        auth_password: "${SMTP_PASSWORD}"
+        to: "${ALERT_EMAIL_TO}"
+        from: "${SMTP_USER}"
+    slack_configs:
+      - send_resolved: true
+        webhook_url: "${SLACK_WEBHOOK_URL}"
+        channel: '#alerts'
+        title: "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}"
+        text: "{{ range .Alerts }}\n**{{ .Labels.alertname }}**\n{{ .Annotations.description }}\n{{ end }}"
+
+inhibit_rules:
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal:
+      - alertname

@@ -1,0 +1,63 @@
+# =============================================================================
+# Docker Build Context Ignore
+# Excludes files not needed inside the Docker image
+# =============================================================================
+
+# Dependencies (large, installed in Docker)
+node_modules/
+
+# Build output (compiled inside Docker)
+dist/
+
+# Version control
+.git/
+.gitignore
+
+# Development tools and configs
+.mavis/
+.mavis/**/*
+tsconfig.json
+vitest.config.ts
+vitest.config.js
+*.test.ts
+*.spec.ts
+test/
+tests/
+
+# Documentation and examples
+docs/
+examples/
+*.md
+
+# Environment files (secrets)
+.env
+.env.*
+!.env.example
+
+# Certificates and persistence (user-specific)
+certs/
+data/
+shapes/
+contexts/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.sublime-*
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor files
+.vscode/
+.idea/
+
+# Docker files (not needed inside image)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+docker/
+scripts/

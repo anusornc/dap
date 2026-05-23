@@ -1,0 +1,48 @@
+groups:
+  - name: dap_alerts
+    interval: 30s
+    rules:
+      - alert: dap_high_error_rate
+        expr: rate(dap_errors_total[5m]) / rate(dap_messages_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DAP high error rate detected"
+          description: "Error rate is {{ $value | printf \"%.2f\" }}% (threshold: 5%)"
+
+      - alert: dap_queue_depth_high
+        expr: dap_pending_jobs > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DAP queue depth is high"
+          description: "Pending jobs count: {{ $value }} (threshold: 50)"
+
+      - alert: dap_agent_offline
+        expr: time() - dap_agent_last_heartbeat > 120
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DAP agent is offline"
+          description: "No heartbeat received for more than 2 minutes"
+
+      - alert: dap_relay_down
+        expr: up{job="dap-relay"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DAP relay is down"
+          description: "DAP relay instance is not responding"
+
+      - alert: dap_job_latency_high
+        expr: histogram_quantile(0.95, rate(dap_job_duration_seconds_bucket[5m])) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DAP job latency is high"
+          description: "95th percentile job latency: {{ $value }}s (threshold: 300s)"
