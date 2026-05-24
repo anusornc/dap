@@ -190,11 +190,11 @@ describe('JobQueue', () => {
   });
 
   describe('persistence', () => {
-    it('should survive restart', () => {
+    it('should survive restart', async () => {
       const dataDir = `/tmp/test-persistence-${Date.now()}-${Math.random()}`;
       const queue1 = new JobQueue(dataDir);
       queue1.submit('agent-1', 'test-task', 5, { data: 'test' });
-      queue1.forceSave();
+      await queue1.forceSave();
 
       const queue2 = new JobQueue(dataDir);
       const job = queue2.query({ type: 'test-task' })[0];

@@ -211,12 +211,12 @@ describe('JobQueue with Provenance', () => {
     expect(updated!.provenance!.completion).toBeDefined();
   });
 
-  it('should preserve provenance through restart', () => {
+  it('should preserve provenance through restart', async () => {
     const testDir = `/tmp/test-provenance-restart-${Date.now()}`;
     const queue = new JobQueue(testDir);
     
     queue.submit('agent-1', 'code-generation', 5, { test: true });
-    queue.forceSave();
+    await queue.forceSave();
 
     // Create new instance with SAME directory to test persistence
     const queue2 = new JobQueue(testDir);

@@ -11,7 +11,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { ProvenanceGenerator } from '../provenance/index.js';
 import { Job, JobStatus, JobConstraints } from '../protocol/types.js';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, promises as fsPromises } from 'fs';
 import { join } from 'path';
 import {
   jobsSubmitted,
@@ -63,6 +63,7 @@ export class JobQueue {
   private persistencePath: string;
   private saveDebounceTimer?: NodeJS.Timeout;
   private dirty: boolean = false;
+  private isSaving: boolean = false;
 
   constructor(dataDir: string = './data') {
     this.dataDir = dataDir;
@@ -119,44 +120,45 @@ export class JobQueue {
     }
 
     this.saveDebounceTimer = setTimeout(() => {
-      this.save();
+      this.save().catch(console.error);
     }, 1000); // Save at most once per second
   }
 
-  private save(): void {
-    if (!this.dirty) return;
+  private async save(): Promise<void> {
+    if (!this.dirty || this.isSaving) return;
+
+    // Clear dirty flag synchronously before yielding to async ops
+    // so new writes during save don't get lost
+    this.dirty = false;
+    this.isSaving = true;
 
     try {
       // Ensure data directory exists
       if (!existsSync(this.dataDir)) {
-        mkdirSync(this.dataDir, { recursive: true });
+        await fsPromises.mkdir(this.dataDir, { recursive: true });
       }
 
       // Backup existing file
       if (existsSync(this.persistencePath)) {
         const backupPath = this.persistencePath + '.backup';
-        const content = readFileSync(this.persistencePath, 'utf-8');
-        writeFileSync(backupPath, content);
+        await fsPromises.copyFile(this.persistencePath, backupPath);
       }
 
       // Write new file atomically
       const data = JSON.stringify(Array.from(this.jobs.values()), null, 2);
       const tempPath = this.persistencePath + '.tmp';
-      writeFileSync(tempPath, data);
-      writeFileSync(this.persistencePath, data);
+      await fsPromises.writeFile(tempPath, data);
+      await fsPromises.rename(tempPath, this.persistencePath);
 
-      // Clean up temp file
-      try {
-        const { unlinkSync } = require('fs');
-        unlinkSync(tempPath);
-      } catch {
-        // Ignore
-      }
-
-      this.dirty = false;
       console.log(`[JobQueue] Saved ${this.jobs.size} jobs to disk`);
     } catch (err) {
       console.error('[JobQueue] Failed to save jobs:', err);
+    } finally {
+      this.isSaving = false;
+      // If queue became dirty again while we were saving, trigger another save
+      if (this.dirty) {
+        this.scheduleSave();
+      }
     }
   }
 
@@ -770,7 +772,7 @@ export class JobQueue {
   }
 
   // Force save (for testing)
-  forceSave(): void {
-    this.save();
+  async forceSave(): Promise<void> {
+    await this.save();
   }
 }
