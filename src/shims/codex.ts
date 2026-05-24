@@ -34,6 +34,7 @@ export interface CodexShimConfig {
   codexExecutable?: string;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
+  taskTimeoutMs?: number;
 }
 
 export class CodexShim {
@@ -50,6 +51,7 @@ export class CodexShim {
       codexTaskDir: join(homedir(), '.codex', 'tasks'),
       pollIntervalMs: 1000,
       heartbeatIntervalMs: 30000,
+      taskTimeoutMs: Number(process.env.CODEX_SHIM_TASK_TIMEOUT_MS || 300000),
       ...config,
     };
     this.taskDir = join(this.config.codexTaskDir!, 'incoming');
@@ -221,7 +223,7 @@ export class CodexShim {
       callbackWs: this.config.relayUrl,
     }, null, 2));
 
-    const maxWaitTime = 300000;
+    const maxWaitTime = this.getTaskTimeoutMs(task);
     const pollInterval = this.config.pollIntervalMs || 1000;
     const startWait = Date.now();
 
@@ -251,6 +253,28 @@ export class CodexShim {
       error: `Task timeout after ${maxWaitTime}ms`,
       executionTimeMs: Date.now() - startTime,
     };
+  }
+
+  private getTaskTimeoutMs(task: Task): number {
+    const a2a = task.context?.a2a as {
+      metadata?: Record<string, unknown>;
+      messageMetadata?: Record<string, unknown>;
+      configuration?: Record<string, unknown>;
+    } | undefined;
+    const timeoutMs =
+      this.readPositiveTimeoutMs(a2a?.metadata?.timeoutMs) ??
+      this.readPositiveTimeoutMs(a2a?.messageMetadata?.timeoutMs) ??
+      this.readPositiveTimeoutMs(a2a?.configuration?.timeoutMs);
+
+    return timeoutMs ?? this.readPositiveTimeoutMs(this.config.taskTimeoutMs) ?? 300000;
+  }
+
+  private readPositiveTimeoutMs(value: unknown): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      return undefined;
+    }
+
+    return Math.trunc(value);
   }
 
   private async handleResponse(msg: DAPMessage): Promise<void> {
@@ -332,6 +356,9 @@ export async function runCodexShim(): Promise<void> {
         break;
       case '--heartbeat-interval':
         config.heartbeatIntervalMs = Number(args[++i]);
+        break;
+      case '--task-timeout-ms':
+        config.taskTimeoutMs = Number(args[++i]);
         break;
     }
   }

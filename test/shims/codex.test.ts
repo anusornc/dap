@@ -259,5 +259,61 @@ describe('CodexShim', () => {
       expect(responseMsg.payload.data.success).toBe(false);
       expect(responseMsg.payload.data.error).toContain('Task timeout after 300000ms');
     });
+
+    it('honors A2A metadata timeout overrides while waiting for worker results', async () => {
+      const connectPromise = shim.connect();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(10);
+      await connectPromise;
+
+      const ws = (shim as any).socket;
+      ws.send.mockClear();
+
+      (fs.readFile as any).mockRejectedValue(new Error('not found'));
+
+      const requestMsg: DAPMessage = {
+        version: '1.0.0',
+        msg_id: 'req-3',
+        timestamp: new Date().toISOString(),
+        from: { agent_id: 'caller' },
+        to: { agent_id: 'test-codex' },
+        action: MessageAction.REQUEST,
+        payload: {
+          type: 'code-completion',
+          data: {
+            description: 'timeout override test',
+            type: 'test-task',
+            context: {
+              a2a: {
+                metadata: { timeoutMs: 600000 },
+              },
+            },
+          }
+        }
+      };
+
+      let messagePromise;
+      if (ws.onmessage) {
+        messagePromise = ws.onmessage({ data: JSON.stringify(requestMsg) });
+      }
+
+      await vi.advanceTimersByTimeAsync(300500);
+      const earlyResponseCall = ws.send.mock.calls
+        .map(call => call[0])
+        .find(raw => JSON.parse(raw).action === MessageAction.RESPONSE);
+      expect(earlyResponseCall).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(300000);
+      await messagePromise;
+
+      const responseCall = ws.send.mock.calls
+        .map(call => call[0])
+        .find(raw => JSON.parse(raw).action === MessageAction.RESPONSE);
+      expect(responseCall).toBeDefined();
+      const responseMsg = JSON.parse(responseCall);
+
+      expect(responseMsg.payload.data.success).toBe(false);
+      expect(responseMsg.payload.data.error).toContain('Task timeout after 600000ms');
+    });
   });
 });
