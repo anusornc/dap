@@ -2,8 +2,8 @@
  * Validation Tests
  */
 
-import { describe, it, expect } from 'vitest';
-import { validateMessage, validateApiKey, sanitizeAgentId, checkRateLimit } from '../src/protocol/validation.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { validateMessage, validateApiKey, sanitizeAgentId, checkRateLimit, sanitizeMessage } from '../src/protocol/validation.js';
 import { DAPMessageSchema } from '../src/protocol/types.js';
 
 describe('validateMessage', () => {
@@ -115,6 +115,49 @@ describe('sanitizeAgentId', () => {
   it('should handle empty string', () => {
     expect(sanitizeAgentId('')).toBe('');
   });
+
+  it('should remove emojis and non-ASCII characters', () => {
+    expect(sanitizeAgentId('agent🚀123')).toBe('agent123');
+    expect(sanitizeAgentId('agent-日本')).toBe('agent-');
+    expect(sanitizeAgentId('agëñt')).toBe('agt');
+  });
+
+  it('should handle exactly 64 characters correctly', () => {
+    const exactly64 = 'a'.repeat(64);
+    expect(sanitizeAgentId(exactly64)).toBe(exactly64);
+    expect(sanitizeAgentId(exactly64).length).toBe(64);
+  });
+});
+
+describe('sanitizeMessage', () => {
+  it('should return empty string for non-string inputs', () => {
+    expect(sanitizeMessage(null as any)).toBe('');
+    expect(sanitizeMessage(undefined as any)).toBe('');
+    expect(sanitizeMessage(123 as any)).toBe('');
+    expect(sanitizeMessage({} as any)).toBe('');
+  });
+
+  it('should allow valid strings without modification', () => {
+    const validStr = 'Hello, World! This is a valid message 123.';
+    expect(sanitizeMessage(validStr)).toBe(validStr);
+  });
+
+  it('should truncate strings exceeding default max length of 10000', () => {
+    const longMsg = 'a'.repeat(15000);
+    const sanitized = sanitizeMessage(longMsg);
+    expect(sanitized.length).toBe(10000);
+    expect(sanitized).toBe('a'.repeat(10000));
+  });
+
+  it('should truncate strings based on custom max length', () => {
+    const msg = '1234567890';
+    expect(sanitizeMessage(msg, 5)).toBe('12345');
+  });
+
+  it('should remove control characters', () => {
+    const msgWithControlChars = 'Hello\x00World\x1FTest\x7F!';
+    expect(sanitizeMessage(msgWithControlChars)).toBe('HelloWorldTest!');
+  });
 });
 
 describe('checkRateLimit', () => {
@@ -156,5 +199,35 @@ describe('checkRateLimit', () => {
 
     expect(result1.remaining).toBe(2);
     expect(result2.remaining).toBe(4);
+  });
+
+  describe('with fake timers', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should reset rate limit after window expires', () => {
+      const uniqueKey = `test-key-reset-${Date.now()}-${Math.random()}`;
+
+      // Exhaust the limit
+      for (let i = 0; i < 10; i++) {
+        checkRateLimit(uniqueKey, 10, 60000);
+      }
+
+      let result = checkRateLimit(uniqueKey, 10, 60000);
+      expect(result.allowed).toBe(false);
+
+      // Advance time by 60 seconds (60000ms) plus 1ms
+      vi.advanceTimersByTime(60001);
+
+      // Request should be allowed again
+      result = checkRateLimit(uniqueKey, 10, 60000);
+      expect(result.allowed).toBe(true);
+      expect(result.remaining).toBe(9);
+    });
   });
 });

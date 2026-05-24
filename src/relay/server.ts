@@ -36,6 +36,7 @@ const DEFAULT_CONFIG: Partial<RelayConfig> = {
   tlsCertPath: process.env.TLS_CERT_PATH || './certs/cert.pem',
   tlsKeyPath: process.env.TLS_KEY_PATH || './certs/key.pem',
   tlsPort: parseInt(process.env.TLS_PORT || '3443'),
+  corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS?.split(',').filter(Boolean) || [],
 };
 
 export class RelayServer {
@@ -74,6 +75,7 @@ export class RelayServer {
 
     this.restHandler = new RESTHandler(this.registry, this.jobQueue, {
       apiKeys: this.config.apiKeys,
+      corsAllowedOrigins: this.config.corsAllowedOrigins,
     });
     this.restHandler.setAgentCards(this.agentCards);
 

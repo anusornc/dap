@@ -4,6 +4,7 @@
  */
 
 import express, { Request, Response, NextFunction } from 'express';
+import cors from 'cors';
 import { AgentRegistry } from './agent-registry.js';
 import { AgentCards } from './agent-cards.js';
 import { JobQueue } from './job-queue.js';
@@ -24,6 +25,7 @@ export interface RESTHandlerConfig {
   apiKeys: string[];
   rateLimitWindowMs: number;
   rateLimitMaxRequests: number;
+  corsAllowedOrigins?: string[];
 }
 
 export class RESTHandler {
@@ -46,6 +48,7 @@ export class RESTHandler {
       apiKeys: config.apiKeys ?? [],
       rateLimitWindowMs: config.rateLimitWindowMs ?? 60000,
       rateLimitMaxRequests: config.rateLimitMaxRequests ?? 100,
+      corsAllowedOrigins: config.corsAllowedOrigins ?? [],
     };
     this.provenanceQuery = new ProvenanceQuery(jobQueue, registry);
 
@@ -132,12 +135,11 @@ export class RESTHandler {
     });
 
     // CORS
-    this.app.use((_req: Request, res: Response, next: NextFunction) => {
-      res.header('Access-Control-Allow-Origin', '*');
-      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-      res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key');
-      next();
-    });
+    this.app.use(cors({
+      origin: this.config.corsAllowedOrigins && this.config.corsAllowedOrigins.length > 0 ? this.config.corsAllowedOrigins : false,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'X-API-Key']
+    }));
 
     // Request logging with structured logs
     this.app.use((req: Request, res: Response, next: NextFunction) => {
