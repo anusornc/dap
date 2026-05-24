@@ -109,6 +109,9 @@ export class AgentRegistry {
     }]);
 
     this.agents.set(agentId, agent);
+    if (socket) {
+      this.socketIndex.set(socket, agentId);
+    }
 
     // Index by capability
     for (const cap of capabilities) {
@@ -117,8 +120,6 @@ export class AgentRegistry {
       }
       this.capabilityIndex.get(cap.name)!.add(agentId);
     }
-
-    this.socketIndex.set(socket, agentId);
 
     // Update metrics
     const shimType = (agentInfo as any).shimType || 'unknown';
@@ -132,8 +133,6 @@ export class AgentRegistry {
   unregister(agentId: string): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
-
-    this.socketIndex.delete(agent.socket);
 
     // Remove from capability index
     for (const [, agentIds] of this.capabilityIndex.entries()) {
@@ -151,6 +150,9 @@ export class AgentRegistry {
     const shimType = (agent.agentInfo as any).shimType || 'unknown';
     activeAgents.labels(shimType).dec();
 
+    if (agent.socket) {
+      this.socketIndex.delete(agent.socket);
+    }
     this.agents.delete(agentId);
   }
 
