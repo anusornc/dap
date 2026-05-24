@@ -14,7 +14,7 @@ import { AgentCards } from './agent-cards.js';
 import { JobQueue } from './job-queue.js';
 import { WSHandler } from './ws-handler.js';
 import { RESTHandler } from './rest-handler.js';
-import { RelayConfig, MessageAction, DAPMessage } from '../protocol/types.js';
+import { RelayConfig, MessageAction, PayloadType, DAPMessage } from '../protocol/types.js';
 import { validateMessage, sanitizeAgentId } from '../protocol/validation.js';
 import { v4 as uuidv4 } from 'uuid';
 import { wsConnections, connectedAgents } from '../utils/metrics.js';
@@ -40,12 +40,36 @@ const DEFAULT_CONFIG: Partial<RelayConfig> = {
   corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS?.split(',').filter(Boolean) || [],
 };
 
-interface PendingRelayRequest {
+export class RelayRequestError extends Error {
+  code: string;
+  details?: string;
+
+  constructor(message: string, code: string, details?: string) {
+    super(message);
+    this.name = 'RelayRequestError';
+    this.code = code;
+    this.details = details;
+  }
+}
+
+interface PendingRelayRequestBase {
   requesterAgentId: string;
-  requesterSocket: any;
   targetAgentId?: string;
   timeout: NodeJS.Timeout;
 }
+
+interface SocketPendingRelayRequest extends PendingRelayRequestBase {
+  kind: 'socket';
+  requesterSocket: any;
+}
+
+interface PromisePendingRelayRequest extends PendingRelayRequestBase {
+  kind: 'promise';
+  resolve: (msg: DAPMessage) => void;
+  reject: (err: RelayRequestError) => void;
+}
+
+type PendingRelayRequest = SocketPendingRelayRequest | PromisePendingRelayRequest;
 
 export class RelayServer {
   private httpServer?: HTTPServer;
@@ -87,6 +111,9 @@ export class RelayServer {
       corsAllowedOrigins: this.config.corsAllowedOrigins,
     });
     this.restHandler.setAgentCards(this.agentCards);
+    this.restHandler.setA2ADispatcher(({ targetAgentId, task, timeoutMs }) =>
+      this.sendRequestToAgent(targetAgentId, task, { timeoutMs })
+    );
 
     this.setupRoutes();
     this.setupUpgradeHandlers();
@@ -382,8 +409,10 @@ export class RelayServer {
     clearTimeout(pending.timeout);
     this.pendingRequests.delete(msg.reply_to || '');
 
-    if (pending.requesterSocket.readyState === 1) {
+    if (pending.kind === 'socket' && pending.requesterSocket.readyState === 1) {
       pending.requesterSocket.send(JSON.stringify(msg));
+    } else if (pending.kind === 'promise') {
+      pending.resolve(msg);
     }
 
     console.log(`[Relay] ${msg.action} from ${msg.from.agent_id} routed to ${pending.requesterAgentId}`);
@@ -401,19 +430,61 @@ export class RelayServer {
       if (!pending) return;
 
       this.pendingRequests.delete(msg.msg_id);
-      this.sendRelayError(
-        pending.requesterSocket,
-        msg,
-        `Request timeout after ${this.config.requestTimeoutMs}ms`,
-        targetAgentId ? `Target: ${targetAgentId}` : undefined
-      );
+      const details = targetAgentId ? `Target: ${targetAgentId}` : undefined;
+      if (pending.kind === 'socket') {
+        this.sendRelayError(
+          pending.requesterSocket,
+          msg,
+          `Request timeout after ${this.config.requestTimeoutMs}ms`,
+          details
+        );
+      } else {
+        pending.reject(new RelayRequestError(
+          `Request timeout after ${this.config.requestTimeoutMs}ms`,
+          'AGENT_TIMEOUT',
+          details
+        ));
+      }
     }, this.config.requestTimeoutMs || 300000);
 
     this.pendingRequests.set(msg.msg_id, {
+      kind: 'socket',
       requesterAgentId,
       requesterSocket,
       targetAgentId,
       timeout,
+    });
+  }
+
+  private trackPendingPromiseRequest(
+    msg: DAPMessage,
+    targetAgentId: string,
+    resolve: (msg: DAPMessage) => void,
+    reject: (err: RelayRequestError) => void,
+    timeoutMs?: number
+  ): void {
+    const requestTimeoutMs = timeoutMs || this.config.requestTimeoutMs || 300000;
+    const timeout = setTimeout(() => {
+      const pending = this.pendingRequests.get(msg.msg_id);
+      if (!pending) return;
+
+      this.pendingRequests.delete(msg.msg_id);
+      if (pending.kind === 'promise') {
+        pending.reject(new RelayRequestError(
+          `Request timeout after ${requestTimeoutMs}ms`,
+          'AGENT_TIMEOUT',
+          `Target: ${targetAgentId}`
+        ));
+      }
+    }, requestTimeoutMs);
+
+    this.pendingRequests.set(msg.msg_id, {
+      kind: 'promise',
+      requesterAgentId: msg.from.agent_id,
+      targetAgentId,
+      timeout,
+      resolve,
+      reject,
     });
   }
 
@@ -452,19 +523,23 @@ export class RelayServer {
   private clearPendingForSocket(socket: any, reason: string): void {
     const disconnectedAgent = this.registry.getBySocket(socket);
     for (const [msgId, pending] of this.pendingRequests.entries()) {
-      if (pending.requesterSocket === socket) {
+      if (pending.kind === 'socket' && pending.requesterSocket === socket) {
         clearTimeout(pending.timeout);
         this.pendingRequests.delete(msgId);
       } else if (pending.targetAgentId && disconnectedAgent?.agentId === pending.targetAgentId) {
         clearTimeout(pending.timeout);
         this.pendingRequests.delete(msgId);
-        this.sendRelayErrorReply(
-          pending.requesterSocket,
-          msgId,
-          pending.requesterAgentId,
-          reason,
-          `Target: ${pending.targetAgentId}`
-        );
+        if (pending.kind === 'socket') {
+          this.sendRelayErrorReply(
+            pending.requesterSocket,
+            msgId,
+            pending.requesterAgentId,
+            reason,
+            `Target: ${pending.targetAgentId}`
+          );
+        } else {
+          pending.reject(new RelayRequestError(reason, 'AGENT_DISCONNECTED', `Target: ${pending.targetAgentId}`));
+        }
       }
     }
   }
@@ -658,6 +733,14 @@ export class RelayServer {
       agent.socket.close(1001, 'Server shutting down');
     }
 
+    for (const [msgId, pending] of this.pendingRequests.entries()) {
+      clearTimeout(pending.timeout);
+      this.pendingRequests.delete(msgId);
+      if (pending.kind === 'promise') {
+        pending.reject(new RelayRequestError('Server shutting down', 'SERVER_SHUTDOWN'));
+      }
+    }
+
     // Close servers
     return new Promise((resolve) => {
       const servers: HTTPServer[] = [this.httpServer!];
@@ -682,6 +765,57 @@ export class RelayServer {
       port: this._boundPort || this.config.port,
       tlsPort: this.config.enableTls ? this.config.tlsPort : undefined,
     };
+  }
+
+  async sendRequestToAgent(
+    targetAgentId: string,
+    task: {
+      description: string;
+      type: string;
+      context?: Record<string, unknown>;
+      priority?: number;
+    },
+    options: { timeoutMs?: number; fromAgentId?: string } = {}
+  ): Promise<DAPMessage> {
+    const target = this.registry.get(targetAgentId);
+    if (!target || target.socket.readyState !== 1) {
+      throw new RelayRequestError('Agent not found or offline', 'AGENT_NOT_FOUND', `Agent: ${targetAgentId}`);
+    }
+
+    const msg: DAPMessage = {
+      version: '1.0.0',
+      msg_id: uuidv4(),
+      timestamp: new Date().toISOString(),
+      from: {
+        agent_id: options.fromAgentId || 'a2a-gateway',
+        capabilities: ['a2a-gateway'],
+        version: '1.0.0',
+      },
+      to: { agent_id: targetAgentId },
+      action: MessageAction.REQUEST,
+      payload: {
+        type: PayloadType.TASK_DELEGATION,
+        data: task,
+      },
+    };
+
+    return new Promise((resolve, reject) => {
+      this.trackPendingPromiseRequest(msg, targetAgentId, resolve, reject, options.timeoutMs);
+      try {
+        target.socket.send(JSON.stringify(msg));
+      } catch (err) {
+        const pending = this.pendingRequests.get(msg.msg_id);
+        if (pending) {
+          clearTimeout(pending.timeout);
+          this.pendingRequests.delete(msg.msg_id);
+        }
+        reject(new RelayRequestError(
+          'Failed to send request to target agent',
+          'AGENT_SEND_FAILED',
+          err instanceof Error ? err.message : String(err)
+        ));
+      }
+    });
   }
 }
 

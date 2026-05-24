@@ -10,7 +10,21 @@ import { AgentCards } from './agent-cards.js';
 import { JobQueue } from './job-queue.js';
 import { validateApiKey, checkCombinedRateLimit } from '../protocol/validation.js';
 import { logInvalidKeyAttempt } from '../protocol/validation.js';
-import { JobStatus, AgentCardStatus } from '../protocol/types.js';
+import { DAPMessage, JobStatus, AgentCardStatus } from '../protocol/types.js';
+import {
+  A2AJsonRpcErrorCode,
+  A2AJsonRpcRequestSchema,
+  A2AMessageSendParamsSchema,
+} from '../a2a/types.js';
+import {
+  createRelayA2ACard,
+  dapAgentCardToA2A,
+  dapReplyToA2AMessage,
+  jsonRpcError,
+  jsonRpcSuccess,
+  messageSendParamsToDapTask,
+  unsupportedMethodError,
+} from '../a2a/adapter.js';
 import { restLogger, metricsCollector } from '../utils/logger.js';
 import { ProvenanceQuery } from '../provenance/index.js';
 import {
@@ -28,6 +42,19 @@ export interface RESTHandlerConfig {
   corsAllowedOrigins?: string[];
 }
 
+export interface A2ADispatchRequest {
+  targetAgentId: string;
+  task: {
+    description: string;
+    type: string;
+    context?: Record<string, unknown>;
+    priority?: number;
+  };
+  timeoutMs?: number;
+}
+
+export type A2ADispatcher = (request: A2ADispatchRequest) => Promise<DAPMessage>;
+
 export class RESTHandler {
   private app: express.Application;
   private registry: AgentRegistry;
@@ -35,6 +62,7 @@ export class RESTHandler {
   private jobQueue: JobQueue;
   private config: RESTHandlerConfig;
   private provenanceQuery: ProvenanceQuery;
+  private a2aDispatcher?: A2ADispatcher;
 
   constructor(
     registry: AgentRegistry,
@@ -54,6 +82,7 @@ export class RESTHandler {
 
     this.setupMiddleware();
     this.setupRoutes();
+    this.setupErrorHandling();
   }
 
   /**
@@ -61,6 +90,10 @@ export class RESTHandler {
    */
   setAgentCards(agentCards: AgentCards): void {
     this.agentCards = agentCards;
+  }
+
+  setA2ADispatcher(dispatcher: A2ADispatcher): void {
+    this.a2aDispatcher = dispatcher;
   }
 
   private setupMiddleware(): void {
@@ -335,6 +368,47 @@ export class RESTHandler {
 
       res.setHeader('Content-Type', 'application/ld+json');
       res.json(this.agentCards.toJsonLd(serverCard));
+    });
+
+    // ============ A2A Compatibility Routes ============
+
+    this.app.get('/.well-known/agent-card.json', (req: Request, res: Response) => {
+      const baseUrl = this.getBaseUrl(req);
+      const card = createRelayA2ACard({
+        baseUrl,
+        agentCount: this.registry.getAll().length,
+        requiresApiKey: this.config.apiKeys.length > 0,
+      });
+
+      res.setHeader('Content-Type', 'application/json');
+      res.json(card);
+    });
+
+    this.app.get('/a2a/agents/:agentId/.well-known/agent-card.json', (req: Request, res: Response) => {
+      if (!this.agentCards) {
+        res.status(503).json({ error: 'Agent cards not initialized' });
+        return;
+      }
+
+      const card = this.agentCards.getCard(req.params.agentId);
+      if (!card) {
+        res.status(404).json({ error: 'Agent card not found' });
+        return;
+      }
+
+      res.setHeader('Content-Type', 'application/json');
+      res.json(dapAgentCardToA2A(card, {
+        baseUrl: this.getBaseUrl(req),
+        requiresApiKey: this.config.apiKeys.length > 0,
+      }));
+    });
+
+    this.app.post('/a2a', async (req: Request, res: Response) => {
+      await this.handleA2AMessageSend(req, res);
+    });
+
+    this.app.post('/a2a/agents/:agentId', async (req: Request, res: Response) => {
+      await this.handleA2AMessageSend(req, res, req.params.agentId);
     });
 
     // Get agents by capability
@@ -639,7 +713,116 @@ export class RESTHandler {
     });
   }
 
+  private setupErrorHandling(): void {
+    this.app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+      if (req.path.startsWith('/a2a') && err instanceof SyntaxError) {
+        res.status(400).json(jsonRpcError(
+          null,
+          A2AJsonRpcErrorCode.PARSE_ERROR,
+          'Parse error',
+          err.message
+        ));
+        return;
+      }
+
+      next(err);
+    });
+  }
+
   getApp(): express.Application {
     return this.app;
+  }
+
+  private getBaseUrl(req: Request): string {
+    const protocol = req.protocol || 'http';
+    const host = req.get('host') || 'localhost';
+    return `${protocol}://${host}`;
+  }
+
+  private async handleA2AMessageSend(
+    req: Request,
+    res: Response,
+    routeTargetAgentId?: string
+  ): Promise<void> {
+    const requestResult = A2AJsonRpcRequestSchema.safeParse(req.body);
+    if (!requestResult.success) {
+      res.status(400).json(jsonRpcError(
+        null,
+        A2AJsonRpcErrorCode.INVALID_REQUEST,
+        'Invalid JSON-RPC request',
+        requestResult.error.flatten()
+      ));
+      return;
+    }
+
+    const rpcRequest = requestResult.data;
+    if (rpcRequest.method !== 'message/send') {
+      res.json(unsupportedMethodError(rpcRequest));
+      return;
+    }
+
+    const paramsResult = A2AMessageSendParamsSchema.safeParse(rpcRequest.params);
+    if (!paramsResult.success) {
+      res.status(400).json(jsonRpcError(
+        rpcRequest.id,
+        A2AJsonRpcErrorCode.INVALID_PARAMS,
+        'Invalid message/send params',
+        paramsResult.error.flatten()
+      ));
+      return;
+    }
+
+    if (!this.a2aDispatcher) {
+      res.status(503).json(jsonRpcError(
+        rpcRequest.id,
+        A2AJsonRpcErrorCode.INTERNAL_ERROR,
+        'A2A dispatcher is not configured'
+      ));
+      return;
+    }
+
+    const params = paramsResult.data;
+    const metadataTarget = params.metadata?.targetAgentId || params.message.metadata?.targetAgentId;
+    const targetAgentId = routeTargetAgentId || (typeof metadataTarget === 'string' ? metadataTarget : undefined);
+    if (!targetAgentId) {
+      res.status(400).json(jsonRpcError(
+        rpcRequest.id,
+        A2AJsonRpcErrorCode.INVALID_PARAMS,
+        'targetAgentId is required for the A2A gateway endpoint'
+      ));
+      return;
+    }
+
+    try {
+      const task = messageSendParamsToDapTask(params);
+      const reply = await this.a2aDispatcher({ targetAgentId, task });
+      const data = reply.payload.data;
+
+      if (data.success === false || data.error) {
+        res.json(jsonRpcError(
+          rpcRequest.id,
+          A2AJsonRpcErrorCode.AGENT_ERROR,
+          typeof data.error === 'string' ? data.error : 'Agent returned an error',
+          data
+        ));
+        return;
+      }
+
+      res.json(jsonRpcSuccess(rpcRequest.id, dapReplyToA2AMessage(reply, params)));
+    } catch (err) {
+      const code = (err as any)?.code === 'AGENT_TIMEOUT'
+        ? A2AJsonRpcErrorCode.AGENT_TIMEOUT
+        : (err as any)?.code === 'AGENT_NOT_FOUND'
+          ? A2AJsonRpcErrorCode.AGENT_NOT_FOUND
+          : A2AJsonRpcErrorCode.INTERNAL_ERROR;
+      const status = code === A2AJsonRpcErrorCode.AGENT_NOT_FOUND ? 404 : code === A2AJsonRpcErrorCode.AGENT_TIMEOUT ? 504 : 500;
+
+      res.status(status).json(jsonRpcError(
+        rpcRequest.id,
+        code,
+        err instanceof Error ? err.message : 'A2A request failed',
+        (err as any)?.details
+      ));
+    }
   }
 }

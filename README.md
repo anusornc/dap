@@ -188,9 +188,73 @@ Every job operation generates a PROV-O-compliant audit record. You can trace job
 | `PATCH` | `/agents/:agentId/card` | Update agent card |
 | `GET` | `/capabilities` | List all capabilities |
 | `GET` | `/.well-known/dap-agent-card` | Get server's agent card |
+| `GET` | `/.well-known/agent-card.json` | Get A2A gateway Agent Card |
+| `GET` | `/a2a/agents/:agentId/.well-known/agent-card.json` | Get a connected DAP agent as an A2A Agent Card |
+| `POST` | `/a2a` | A2A JSON-RPC gateway `message/send` with `metadata.targetAgentId` |
+| `POST` | `/a2a/agents/:agentId` | A2A JSON-RPC `message/send` to one connected DAP agent |
 | `POST` | `/jobs` | Submit job to queue |
 | `GET` | `/jobs` | List pending jobs |
 | `GET` | `/jobs/:id` | Get job status |
+
+### A2A Compatibility Bridge
+
+DAP exposes a synchronous A2A-compatible HTTP surface for clients that speak Agent-to-Agent JSON-RPC. This is an inbound compatibility subset: A2A clients can discover DAP agents and call connected DAP agents through the relay, while agents still connect to DAP over WebSocket.
+
+Discovery:
+
+```bash
+curl http://localhost:3000/.well-known/agent-card.json
+curl http://localhost:3000/a2a/agents/my-codex-agent/.well-known/agent-card.json
+```
+
+Send a synchronous `message/send` request to one connected DAP agent:
+
+```bash
+curl -X POST http://localhost:3000/a2a/agents/my-codex-agent \
+  -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "req-1",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "parts": [{ "kind": "text", "text": "Summarize the current repository status" }],
+        "messageId": "msg-1",
+        "kind": "message"
+      }
+    }
+  }'
+```
+
+The relay-level gateway endpoint also works when `metadata.targetAgentId` is supplied:
+
+```bash
+curl -X POST http://localhost:3000/a2a \
+  -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "req-2",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "parts": [{ "kind": "text", "text": "Run a smoke check" }],
+        "messageId": "msg-2",
+        "kind": "message"
+      },
+      "metadata": { "targetAgentId": "my-codex-agent" }
+    }
+  }'
+```
+
+If `API_KEYS` is configured, use the same REST header as other HTTP endpoints:
+
+```bash
+curl -H 'x-api-key: <key>' http://localhost:3000/.well-known/agent-card.json
+```
+
+Current limits: the bridge targets an A2A v0.3.0-style shape for Agent Cards and JSON-RPC `message/send`, advertises `streaming: false`, and does not yet implement outbound A2A federation, `message/stream`, task polling, push notifications, or full A2A task history.
 
 ### Agent Cards (JSON-LD)
 
