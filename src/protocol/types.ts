@@ -184,6 +184,7 @@ export interface RelayConfig {
   tlsPort?: number;
   heartbeatIntervalMs: number;
   heartbeatTimeoutMs: number;
+  requestTimeoutMs?: number;
   corsAllowedOrigins?: string[];
 }
 

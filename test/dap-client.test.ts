@@ -254,6 +254,36 @@ describe('DAPClient', () => {
       expect(result.result).toBe('done');
     });
 
+    it('should send requests and resolve relay errors as failed results', async () => {
+      const socket = (client as any).socket as MockWebSocket;
+      socket.send.mockClear();
+
+      const requestPromise = client.sendRequest('missing-agent', {
+        description: 'do work',
+        type: 'work'
+      });
+
+      expect(socket.send).toHaveBeenCalledTimes(1);
+      const sentMsg = JSON.parse(socket.send.mock.calls[0][0]);
+      const msgId = sentMsg.msg_id;
+
+      socket.simulateMessage({
+        action: 'error',
+        reply_to: msgId,
+        payload: {
+          type: 'error-report',
+          data: {
+            success: false,
+            error: 'Agent not found or offline'
+          }
+        }
+      });
+
+      const result = await requestPromise;
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Agent not found or offline');
+    });
+
     it('should reject requests on timeout', async () => {
       vi.useFakeTimers();
 

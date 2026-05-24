@@ -32,12 +32,20 @@ const DEFAULT_CONFIG: Partial<RelayConfig> = {
   apiKeys: process.env.API_KEYS?.split(',').filter(Boolean) || [],
   heartbeatIntervalMs: parseInt(process.env.HEARTBEAT_INTERVAL_MS || '30000'),
   heartbeatTimeoutMs: parseInt(process.env.HEARTBEAT_TIMEOUT_MS || '60000'),
+  requestTimeoutMs: parseInt(process.env.REQUEST_TIMEOUT_MS || '300000'),
   enableTls: process.env.ENABLE_TLS === 'true',
   tlsCertPath: process.env.TLS_CERT_PATH || './certs/cert.pem',
   tlsKeyPath: process.env.TLS_KEY_PATH || './certs/key.pem',
   tlsPort: parseInt(process.env.TLS_PORT || '3443'),
   corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS?.split(',').filter(Boolean) || [],
 };
+
+interface PendingRelayRequest {
+  requesterAgentId: string;
+  requesterSocket: any;
+  targetAgentId?: string;
+  timeout: NodeJS.Timeout;
+}
 
 export class RelayServer {
   private httpServer?: HTTPServer;
@@ -51,6 +59,7 @@ export class RelayServer {
   private restHandler: RESTHandler;
   private config: RelayConfig;
   private cleanupInterval?: NodeJS.Timeout;
+  private pendingRequests: Map<string, PendingRelayRequest> = new Map();
   private _boundPort: number = 0;
 
   constructor(config: Partial<RelayConfig> = {}, options?: { testMode?: boolean }) {
@@ -202,6 +211,7 @@ export class RelayServer {
 
       socket.on('close', () => {
         const agent = this.registry.getBySocket(socket as any);
+        this.clearPendingForSocket(socket as any, 'Socket disconnected');
         if (agent) {
           console.log(`[Relay] Agent disconnected: ${agent.agentId}`);
           this.registry.unregister(agent.agentId);
@@ -227,6 +237,16 @@ export class RelayServer {
     }
 
     const sanitizedId = sanitizeAgentId(agentId);
+    if (sanitizedId !== agentId) {
+      socket.send(JSON.stringify({
+        success: false,
+        error: 'agentId contains unsupported characters',
+        sanitizedAgentId: sanitizedId,
+      }));
+      socket.close(4000, 'Invalid agentId');
+      return;
+    }
+
     const agentInfo: any = {
       agent_id: sanitizedId,
       os: os || 'unknown',
@@ -257,14 +277,31 @@ export class RelayServer {
     }));
   }
 
-  private handleMessage(_socket: any, msg: DAPMessage): void {
+  private handleMessage(socket: any, msg: DAPMessage): void {
+    const registeredAgent = this.registry.getBySocket(socket);
+    if (!registeredAgent) {
+      this.sendRelayError(socket, msg, 'Socket is not registered');
+      return;
+    }
+
+    if (registeredAgent.agentId !== msg.from.agent_id) {
+      this.sendRelayError(
+        socket,
+        msg,
+        'Message from.agent_id does not match registered socket identity',
+        `Registered agent: ${registeredAgent.agentId}`
+      );
+      return;
+    }
+
     switch (msg.action) {
       case MessageAction.REQUEST:
-        this.handleRequest(msg);
+        this.handleRequest(socket, msg);
         break;
 
       case MessageAction.RESPONSE:
-        this.handleResponse(msg);
+      case MessageAction.ERROR:
+        this.handleReply(socket, msg);
         break;
 
       case MessageAction.EVENT:
@@ -287,33 +324,149 @@ export class RelayServer {
         this.registry.updateHeartbeat(msg.from.agent_id);
         break;
 
+      case MessageAction.CAPABILITY_QUERY:
+        this.handleCapabilityQuery(socket, msg);
+        break;
+
       default:
         console.warn(`[Relay] Unknown action: ${msg.action}`);
     }
   }
 
-  private handleRequest(msg: DAPMessage): void {
+  private handleRequest(socket: any, msg: DAPMessage): void {
     const to = msg.to;
 
     if (typeof to === 'object' && to !== null && 'agent_id' in to) {
       const target = this.registry.get(to.agent_id);
       if (target && target.socket.readyState === 1) { // OPEN
+        this.trackPendingRequest(msg, socket, target.agentId);
         target.socket.send(JSON.stringify(msg));
+      } else {
+        this.sendRelayError(socket, msg, 'Agent not found or offline', `Agent: ${to.agent_id}`);
       }
     } else if (typeof to === 'object' && to !== null && 'capability' in to) {
-      const agents = this.registry.getByCapability(to.capability);
+      const agents = this.registry.getByCapability(to.capability)
+        .filter(agent => agent.socket.readyState === 1);
       if (agents.length > 0) {
         // Route to first available (round-robin for better load distribution)
         const agent = agents[Math.floor(Math.random() * agents.length)];
+        this.trackPendingRequest(msg, socket, agent.agentId);
         agent.socket.send(JSON.stringify(msg));
+      } else {
+        this.sendRelayError(socket, msg, 'No agent available with capability', `Capability: ${to.capability}`);
       }
+    } else {
+      this.sendRelayError(socket, msg, 'Invalid destination', 'Missing to.agent_id or to.capability');
     }
   }
 
-  private handleResponse(msg: DAPMessage): void {
-    // Route response back to original requester
-    // For now, broadcast to all - sophisticated routing would track message chains
-    console.log(`[Relay] Response from ${msg.from.agent_id}`);
+  private handleReply(socket: any, msg: DAPMessage): void {
+    const pending = this.pendingRequests.get(msg.reply_to || '');
+    if (!pending) {
+      console.warn(`[Relay] Reply without pending request: ${msg.reply_to || 'missing reply_to'}`);
+      this.sendRelayError(socket, msg, 'Unknown reply_to', msg.reply_to);
+      return;
+    }
+
+    if (pending.targetAgentId && pending.targetAgentId !== msg.from.agent_id) {
+      this.sendRelayErrorReply(
+        socket,
+        msg.msg_id,
+        msg.from.agent_id,
+        'Unauthorized responder',
+        `Expected: ${pending.targetAgentId}; got: ${msg.from.agent_id}`
+      );
+      return;
+    }
+
+    clearTimeout(pending.timeout);
+    this.pendingRequests.delete(msg.reply_to || '');
+
+    if (pending.requesterSocket.readyState === 1) {
+      pending.requesterSocket.send(JSON.stringify(msg));
+    }
+
+    console.log(`[Relay] ${msg.action} from ${msg.from.agent_id} routed to ${pending.requesterAgentId}`);
+  }
+
+  private trackPendingRequest(msg: DAPMessage, requesterSocket: any, targetAgentId?: string): void {
+    const existing = this.pendingRequests.get(msg.msg_id);
+    if (existing) {
+      clearTimeout(existing.timeout);
+    }
+
+    const requesterAgentId = this.registry.getBySocket(requesterSocket)?.agentId || msg.from.agent_id;
+    const timeout = setTimeout(() => {
+      const pending = this.pendingRequests.get(msg.msg_id);
+      if (!pending) return;
+
+      this.pendingRequests.delete(msg.msg_id);
+      this.sendRelayError(
+        pending.requesterSocket,
+        msg,
+        `Request timeout after ${this.config.requestTimeoutMs}ms`,
+        targetAgentId ? `Target: ${targetAgentId}` : undefined
+      );
+    }, this.config.requestTimeoutMs || 300000);
+
+    this.pendingRequests.set(msg.msg_id, {
+      requesterAgentId,
+      requesterSocket,
+      targetAgentId,
+      timeout,
+    });
+  }
+
+  private sendRelayError(socket: any, originalMsg: DAPMessage, error: string, details?: string): void {
+    this.sendRelayErrorReply(socket, originalMsg.msg_id, originalMsg.from.agent_id, error, details);
+  }
+
+  private sendRelayErrorReply(socket: any, replyTo: string, toAgentId: string, error: string, details?: string): void {
+    if (socket.readyState !== 1) return;
+
+    const errorMsg: DAPMessage = {
+      version: '1.0.0',
+      msg_id: uuidv4(),
+      timestamp: new Date().toISOString(),
+      from: {
+        agent_id: 'relay-server',
+        capabilities: ['relay'],
+        version: '1.0.0',
+      },
+      to: { agent_id: toAgentId },
+      action: MessageAction.ERROR,
+      payload: {
+        type: 'error-report',
+        data: {
+          success: false,
+          error,
+          details,
+        },
+      },
+      reply_to: replyTo,
+    };
+
+    socket.send(JSON.stringify(errorMsg));
+  }
+
+  private clearPendingForSocket(socket: any, reason: string): void {
+    const disconnectedAgent = this.registry.getBySocket(socket);
+    for (const [msgId, pending] of this.pendingRequests.entries()) {
+      if (pending.requesterSocket === socket) {
+        clearTimeout(pending.timeout);
+        this.pendingRequests.delete(msgId);
+      } else if (pending.targetAgentId && disconnectedAgent?.agentId === pending.targetAgentId) {
+        clearTimeout(pending.timeout);
+        this.pendingRequests.delete(msgId);
+        this.sendRelayErrorReply(
+          pending.requesterSocket,
+          msgId,
+          pending.requesterAgentId,
+          reason,
+          `Target: ${pending.targetAgentId}`
+        );
+      }
+    }
   }
 
   private handleEvent(msg: DAPMessage): void {
@@ -329,6 +482,28 @@ export class RelayServer {
         }
       }
     }
+  }
+
+  private handleCapabilityQuery(socket: any, msg: DAPMessage): void {
+    const capabilities = this.registry.getAllCapabilities();
+    const agents = this.registry.toJSON();
+
+    socket.send(JSON.stringify({
+      version: '1.0.0',
+      msg_id: uuidv4(),
+      timestamp: new Date().toISOString(),
+      from: { agent_id: 'relay-server', capabilities: ['relay'] },
+      to: { agent_id: msg.from.agent_id },
+      action: MessageAction.RESPONSE,
+      payload: {
+        type: 'capability-query-result',
+        data: {
+          capabilities: Object.fromEntries(capabilities),
+          agents,
+        },
+      },
+      reply_to: msg.msg_id,
+    } as DAPMessage));
   }
 
   private handleJobSubmission(msg: DAPMessage): void {

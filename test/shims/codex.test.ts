@@ -92,6 +92,44 @@ describe('CodexShim', () => {
       expect(msg.action).toBe('register');
       expect(msg.agentId).toBe('test-codex');
     });
+
+    it('uses heartbeat interval independently from task polling interval', async () => {
+      shim = new CodexShim({
+        ...config,
+        pollIntervalMs: 100,
+        heartbeatIntervalMs: 1000,
+      });
+      const connectPromise = shim.connect();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(10);
+      await connectPromise;
+
+      const ws = (shim as any).socket;
+      ws.send.mockClear();
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(ws.send).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(ws.send).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(ws.send.mock.calls[0][0]).action).toBe(MessageAction.HEARTBEAT);
+    });
+
+    it('ignores registration acknowledgements without logging unhandled messages', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const connectPromise = shim.connect();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(10);
+      await connectPromise;
+
+      const ws = (shim as any).socket;
+      if (ws.onmessage) {
+        await ws.onmessage({ data: JSON.stringify({ success: true, agentId: 'test-codex' }) });
+      }
+
+      expect(logSpy).not.toHaveBeenCalledWith('[Codex Shim] Unhandled: undefined');
+      logSpy.mockRestore();
+    });
   });
 
   describe('disconnect', () => {

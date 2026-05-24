@@ -68,6 +68,39 @@ npm run worker:codex -- --workdir /path/to/workspace
 
 The shim receives relay tasks into `~/.codex/tasks/incoming`; the worker runs `codex exec` for each task and writes the matching result into `~/.codex/tasks/results`.
 
+For a two-machine Codex setup, run the relay on the host that both machines can reach:
+
+```bash
+HOST=0.0.0.0 PORT=3000 npm run relay
+```
+
+Then run the remote Codex agent with two terminals on the second machine:
+
+```bash
+# Terminal 1: keep the relay connection alive and delegate tasks to files
+npm run shim:codex -- --relay ws://<relay-host-ip>:3000/ws --agent-id codex-mac
+
+# Terminal 2: execute delegated task files in the desired workspace
+npm run worker:codex -- --workdir /path/to/workspace
+```
+
+The requester should receive a structured `sendRequest()` result or error. A successful smoke test is not only a relay log such as `Response from codex-mac`; the original requester must resolve with the returned payload. Relay-generated failures, including offline targets and request timeouts, are sent back as `ERROR` messages correlated by `reply_to`.
+
+Useful Codex worker hardening flags:
+
+```bash
+npm run worker:codex -- \
+  --workdir /path/to/workspace \
+  --timeout-ms 300000 \
+  --kill-grace-ms 5000 \
+  --output-limit 200000 \
+  --allow-type code-review,refactoring
+```
+
+Use `--allow-type` when the worker should only accept specific task types. Stale files left under `~/.codex/tasks/processing` are moved back to `incoming` on worker startup so interrupted tasks can be retried. The default worker execution policy remains conservative: `--sandbox workspace-write` and `--approval never`.
+
+Treat cross-machine Codex execution as trusted-network execution. For shared networks or internet-facing relays, configure API keys, prefer TLS/WSS, and restrict worker task types before accepting remote tasks.
+
 ### 4. Send a Message
 
 Use the client library to send messages between agents:

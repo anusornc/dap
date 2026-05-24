@@ -33,6 +33,7 @@ export interface CodexShimConfig {
   codexTaskDir?: string;
   codexExecutable?: string;
   pollIntervalMs?: number;
+  heartbeatIntervalMs?: number;
 }
 
 export class CodexShim {
@@ -48,6 +49,7 @@ export class CodexShim {
     this.config = {
       codexTaskDir: join(homedir(), '.codex', 'tasks'),
       pollIntervalMs: 1000,
+      heartbeatIntervalMs: 30000,
       ...config,
     };
     this.taskDir = join(this.config.codexTaskDir!, 'incoming');
@@ -133,6 +135,10 @@ export class CodexShim {
   }
 
   private async handleIncomingMessage(msg: DAPMessage): Promise<void> {
+    if (!msg.action && 'success' in msg) {
+      return;
+    }
+
     switch (msg.action) {
       case MessageAction.REQUEST:
         await this.handleRequest(msg);
@@ -286,7 +292,7 @@ export class CodexShim {
           data: { status: 'healthy' },
         },
       });
-    }, this.config.pollIntervalMs);
+    }, this.config.heartbeatIntervalMs);
   }
 
   private stopPolling(): void {
@@ -323,6 +329,9 @@ export async function runCodexShim(): Promise<void> {
         break;
       case '--task-dir':
         config.codexTaskDir = args[++i];
+        break;
+      case '--heartbeat-interval':
+        config.heartbeatIntervalMs = Number(args[++i]);
         break;
     }
   }

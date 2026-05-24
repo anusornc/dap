@@ -10,30 +10,41 @@ import { homedir } from 'os';
 import { spawn } from 'child_process';
 import { Task } from './codex.js';
 
-interface WorkerConfig {
+export interface WorkerConfig {
   taskRoot: string;
   workdir: string;
   codexBin: string;
   pollIntervalMs: number;
+  timeoutMs: number;
+  killGraceMs: number;
+  outputLimitBytes: number;
+  allowedTypes: string[];
   once: boolean;
   sandbox: string;
   approval: string;
   model?: string;
 }
 
-interface CommandResult {
+export interface CommandResult {
   exitCode: number | null;
   stdout: string;
   stderr: string;
   error?: string;
 }
 
-function parseArgs(args: string[]): WorkerConfig {
+export function parseArgs(args: string[]): WorkerConfig {
   const config: WorkerConfig = {
     taskRoot: join(homedir(), '.codex', 'tasks'),
     workdir: process.cwd(),
     codexBin: process.env.CODEX_BIN || 'codex',
     pollIntervalMs: 1000,
+    timeoutMs: Number(process.env.CODEX_WORKER_TIMEOUT_MS || 300000),
+    killGraceMs: Number(process.env.CODEX_WORKER_KILL_GRACE_MS || 5000),
+    outputLimitBytes: Number(process.env.CODEX_WORKER_OUTPUT_LIMIT_BYTES || 200000),
+    allowedTypes: (process.env.CODEX_WORKER_ALLOWED_TYPES || '')
+      .split(',')
+      .map(type => type.trim())
+      .filter(Boolean),
     once: false,
     sandbox: 'workspace-write',
     approval: 'never',
@@ -52,6 +63,18 @@ function parseArgs(args: string[]): WorkerConfig {
         break;
       case '--poll-interval':
         config.pollIntervalMs = Number(args[++i]);
+        break;
+      case '--timeout-ms':
+        config.timeoutMs = Number(args[++i]);
+        break;
+      case '--kill-grace-ms':
+        config.killGraceMs = Number(args[++i]);
+        break;
+      case '--output-limit':
+        config.outputLimitBytes = Number(args[++i]);
+        break;
+      case '--allow-type':
+        config.allowedTypes.push(...args[++i].split(',').map(type => type.trim()).filter(Boolean));
         break;
       case '--sandbox':
         config.sandbox = args[++i];
@@ -89,7 +112,28 @@ function buildPrompt(task: Task): string {
   ].join('\n');
 }
 
-async function runCodex(config: WorkerConfig, task: Task): Promise<CommandResult> {
+function appendLimited(current: string, chunk: string, limit: number): string {
+  if (limit <= 0) return '';
+  const marker = '\n...[truncated]';
+  const next = current + chunk;
+  if (Buffer.byteLength(next, 'utf8') <= limit) return next;
+
+  const markerBytes = Buffer.byteLength(marker, 'utf8');
+  if (limit <= markerBytes) {
+    return Buffer.from(marker, 'utf8').subarray(0, limit).toString('utf8');
+  }
+
+  const prefixLimit = limit - markerBytes;
+  let prefix = '';
+  for (const char of next) {
+    if (Buffer.byteLength(prefix + char, 'utf8') > prefixLimit) break;
+    prefix += char;
+  }
+
+  return prefix + marker;
+}
+
+export async function runCodex(config: WorkerConfig, task: Task): Promise<CommandResult> {
   const args = [
     'exec',
     '--cd',
@@ -115,17 +159,36 @@ async function runCodex(config: WorkerConfig, task: Task): Promise<CommandResult
 
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    let timedOut = false;
+    let killTimer: NodeJS.Timeout | undefined;
+
+    const finish = (result: CommandResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
+      resolve(result);
+    };
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      killTimer = setTimeout(() => {
+        child.kill('SIGKILL');
+      }, config.killGraceMs);
+    }, config.timeoutMs);
 
     child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
+      stdout = appendLimited(stdout, chunk.toString(), config.outputLimitBytes);
     });
 
     child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderr = appendLimited(stderr, chunk.toString(), config.outputLimitBytes);
     });
 
     child.on('error', (err) => {
-      resolve({
+      finish({
         exitCode: null,
         stdout,
         stderr,
@@ -134,18 +197,42 @@ async function runCodex(config: WorkerConfig, task: Task): Promise<CommandResult
     });
 
     child.on('close', (exitCode) => {
-      resolve({ exitCode, stdout, stderr });
+      if (timedOut) {
+        finish({
+          exitCode: null,
+          stdout,
+          stderr,
+          error: `Codex timed out after ${config.timeoutMs}ms`,
+        });
+        return;
+      }
+
+      finish({ exitCode, stdout, stderr });
     });
   });
 }
 
-async function ensureDirs(config: WorkerConfig): Promise<void> {
+export async function ensureDirs(config: WorkerConfig): Promise<void> {
   await mkdir(join(config.taskRoot, 'incoming'), { recursive: true });
   await mkdir(join(config.taskRoot, 'processing'), { recursive: true });
   await mkdir(join(config.taskRoot, 'results'), { recursive: true });
 }
 
-async function processOne(config: WorkerConfig): Promise<boolean> {
+export async function recoverStaleProcessing(config: WorkerConfig): Promise<void> {
+  const incomingDir = join(config.taskRoot, 'incoming');
+  const processingDir = join(config.taskRoot, 'processing');
+  const files = (await readdir(processingDir))
+    .filter(file => file.endsWith('.json'))
+    .sort();
+
+  for (const file of files) {
+    const incomingPath = join(incomingDir, file);
+    if (existsSync(incomingPath)) continue;
+    await rename(join(processingDir, file), incomingPath).catch(() => {});
+  }
+}
+
+export async function processOne(config: WorkerConfig): Promise<boolean> {
   const incomingDir = join(config.taskRoot, 'incoming');
   const processingDir = join(config.taskRoot, 'processing');
   const resultsDir = join(config.taskRoot, 'results');
@@ -171,6 +258,20 @@ async function processOne(config: WorkerConfig): Promise<boolean> {
 
   console.log(`[Codex Worker] Running task ${task.taskId}: ${task.type}`);
 
+  const startTime = Date.now();
+  if (config.allowedTypes.length > 0 && !config.allowedTypes.includes(task.type)) {
+    await writeFile(resultPath, JSON.stringify({
+      success: false,
+      data: { exitCode: null },
+      error: `Task type not allowed: ${task.type}`,
+      executionTimeMs: Date.now() - startTime,
+    }, null, 2));
+
+    await unlink(processingPath).catch(() => {});
+    console.log(`[Codex Worker] Rejected task ${task.taskId}: ${task.type}`);
+    return true;
+  }
+
   const result = await runCodex(config, task);
   const success = result.exitCode === 0 && !result.error;
 
@@ -181,7 +282,7 @@ async function processOne(config: WorkerConfig): Promise<boolean> {
       exitCode: result.exitCode,
     },
     error: success ? undefined : result.error || result.stderr || `Codex exited with ${result.exitCode}`,
-    executionTimeMs: undefined,
+    executionTimeMs: Date.now() - startTime,
   }, null, 2));
 
   await unlink(processingPath).catch(() => {});
@@ -201,6 +302,7 @@ export async function runCodexWorker(): Promise<void> {
   }
 
   await ensureDirs(config);
+  await recoverStaleProcessing(config);
 
   console.log(`[Codex Worker] Watching ${join(config.taskRoot, 'incoming')}`);
   console.log(`[Codex Worker] Workdir ${config.workdir}`);
