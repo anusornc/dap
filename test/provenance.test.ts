@@ -191,6 +191,18 @@ describe('JobQueue with Provenance', () => {
     )).toBe(true);
   });
 
+  it('should query provenance by submitting and claiming agents', () => {
+    const job = queue.submit('agent-1', 'code-generation', 5, {});
+    queue.claim(job.job_id, 'agent-2');
+
+    const submitted = queue.queryByAgent('agent-1');
+    const claimed = queue.queryByAgent('agent-2');
+
+    expect(submitted.map(record => record.entity)).toContain(job.job_id);
+    expect(claimed.map(record => record.entity)).toContain(job.job_id);
+    expect(queue.queryByAgent('agent-3')).toEqual([]);
+  });
+
   it('should generate provenance on job completion', () => {
     const job = queue.submit('agent-1', 'code-generation', 5, {});
     queue.claim(job.job_id, 'agent-2');
@@ -211,12 +223,12 @@ describe('JobQueue with Provenance', () => {
     expect(updated!.provenance!.completion).toBeDefined();
   });
 
-  it('should preserve provenance through restart', () => {
+  it('should preserve provenance through restart', async () => {
     const testDir = `/tmp/test-provenance-restart-${Date.now()}`;
     const queue = new JobQueue(testDir);
     
     queue.submit('agent-1', 'code-generation', 5, { test: true });
-    queue.forceSave();
+    await queue.forceSave();
 
     // Create new instance with SAME directory to test persistence
     const queue2 = new JobQueue(testDir);

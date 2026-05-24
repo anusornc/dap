@@ -11,7 +11,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { ProvenanceGenerator } from '../provenance/index.js';
 import { Job, JobStatus, JobConstraints } from '../protocol/types.js';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, promises as fsPromises } from 'fs';
 import { join } from 'path';
 import {
   jobsSubmitted,
@@ -54,10 +54,17 @@ export class JobQueue {
   private typeIndex: Map<string, Set<string>> = new Map();
   private submitterIndex: Map<string, Set<string>> = new Map();
   private capabilityIndex: Map<string, Set<string>> = new Map();
+  private claimedByIndex: Map<string, Set<string>> = new Map();
+
+  // Pending jobs tracking for faster lookups
+  private pendingIndex: Set<string> = new Set();
+  private pendingCapabilityIndex: Map<string, Set<string>> = new Map();
+
   private dataDir: string;
   private persistencePath: string;
   private saveDebounceTimer?: NodeJS.Timeout;
   private dirty: boolean = false;
+  private isSaving: boolean = false;
 
   constructor(dataDir: string = './data') {
     this.dataDir = dataDir;
@@ -114,44 +121,45 @@ export class JobQueue {
     }
 
     this.saveDebounceTimer = setTimeout(() => {
-      this.save();
+      this.save().catch(console.error);
     }, 1000); // Save at most once per second
   }
 
-  private save(): void {
-    if (!this.dirty) return;
+  private async save(): Promise<void> {
+    if (!this.dirty || this.isSaving) return;
+
+    // Clear dirty flag synchronously before yielding to async ops
+    // so new writes during save don't get lost
+    this.dirty = false;
+    this.isSaving = true;
 
     try {
       // Ensure data directory exists
       if (!existsSync(this.dataDir)) {
-        mkdirSync(this.dataDir, { recursive: true });
+        await fsPromises.mkdir(this.dataDir, { recursive: true });
       }
 
       // Backup existing file
       if (existsSync(this.persistencePath)) {
         const backupPath = this.persistencePath + '.backup';
-        const content = readFileSync(this.persistencePath, 'utf-8');
-        writeFileSync(backupPath, content);
+        await fsPromises.copyFile(this.persistencePath, backupPath);
       }
 
       // Write new file atomically
       const data = JSON.stringify(Array.from(this.jobs.values()), null, 2);
       const tempPath = this.persistencePath + '.tmp';
-      writeFileSync(tempPath, data);
-      writeFileSync(this.persistencePath, data);
+      await fsPromises.writeFile(tempPath, data);
+      await fsPromises.rename(tempPath, this.persistencePath);
 
-      // Clean up temp file
-      try {
-        const { unlinkSync } = require('fs');
-        unlinkSync(tempPath);
-      } catch {
-        // Ignore
-      }
-
-      this.dirty = false;
       console.log(`[JobQueue] Saved ${this.jobs.size} jobs to disk`);
     } catch (err) {
       console.error('[JobQueue] Failed to save jobs:', err);
+    } finally {
+      this.isSaving = false;
+      // If queue became dirty again while we were saving, trigger another save
+      if (this.dirty) {
+        this.scheduleSave();
+      }
     }
   }
 
@@ -174,6 +182,31 @@ export class JobQueue {
         this.capabilityIndex.set(job.capability_required, new Set());
       }
       this.capabilityIndex.get(job.capability_required)!.add(job.job_id);
+    }
+
+    // Index by claimed_by
+    if (job.claimed_by) {
+      if (!this.claimedByIndex.has(job.claimed_by)) {
+        this.claimedByIndex.set(job.claimed_by, new Set());
+      }
+      this.claimedByIndex.get(job.claimed_by)!.add(job.job_id);
+    }
+
+    if (job.status === JobStatus.PENDING) {
+      this.pendingIndex.add(job.job_id);
+      if (job.capability_required) {
+        if (!this.pendingCapabilityIndex.has(job.capability_required)) {
+          this.pendingCapabilityIndex.set(job.capability_required, new Set());
+        }
+        this.pendingCapabilityIndex.get(job.capability_required)!.add(job.job_id);
+      }
+    }
+  }
+
+  private removeFromPendingIndex(job: Job): void {
+    this.pendingIndex.delete(job.job_id);
+    if (job.capability_required) {
+      this.pendingCapabilityIndex.get(job.capability_required)?.delete(job.job_id);
     }
   }
 
@@ -233,8 +266,15 @@ export class JobQueue {
     }
 
     job.status = JobStatus.CLAIMED;
+    this.removeFromPendingIndex(job);
     job.claimed_by = agentId;
     job.started_at = new Date().toISOString();
+
+    // Update claimed_by index
+    if (!this.claimedByIndex.has(agentId)) {
+      this.claimedByIndex.set(agentId, new Set());
+    }
+    this.claimedByIndex.get(agentId)!.add(jobId);
 
     // Generate PROV-O provenance record for job claim
     if (job.provenance) {
@@ -368,6 +408,7 @@ export class JobQueue {
     const prevStatus = job.status;
 
     job.status = JobStatus.CANCELLED;
+    this.removeFromPendingIndex(job);
     job.error = reason || 'Cancelled by submitter';
     job.completed_at = new Date().toISOString();
     this.scheduleSave();
@@ -401,24 +442,33 @@ export class JobQueue {
   }
 
   getByAgent(agentId: string): Job[] {
-    const results: Job[] = [];
+    const jobIds = this.claimedByIndex.get(agentId);
+    if (!jobIds) return [];
 
-    for (const job of this.jobs.values()) {
-      if (job.claimed_by === agentId) {
-        results.push(job);
-      }
-    }
-
-    return results;
+    return Array.from(jobIds)
+      .map(id => this.jobs.get(id))
+      .filter((j): j is Job => j !== undefined);
   }
 
   findAvailable(capabilityRequired?: string, type?: string): Job | null {
     let best: Job | null = null;
 
-    for (const job of this.jobs.values()) {
-      if (job.status !== JobStatus.PENDING) continue;
+    let candidateIds: Iterable<string> | undefined;
 
-      if (capabilityRequired && job.capability_required !== capabilityRequired) continue;
+    if (capabilityRequired) {
+      candidateIds = this.pendingCapabilityIndex.get(capabilityRequired);
+    } else {
+      candidateIds = this.pendingIndex;
+    }
+
+    if (!candidateIds) return null;
+
+    for (const jobId of candidateIds) {
+      const job = this.jobs.get(jobId);
+      if (!job) continue;
+
+      // Status check is theoretically redundant due to index, but good for safety
+      if (job.status !== JobStatus.PENDING) continue;
       if (type && job.type !== type) continue;
 
       if (!best || job.priority < best.priority) {
@@ -586,7 +636,15 @@ export class JobQueue {
   queryByAgent(agentId: string, from?: Date, to?: Date): SimplifiedProvenanceRecord[] {
     const records: SimplifiedProvenanceRecord[] = [];
 
-    for (const job of this.jobs.values()) {
+    const jobsToCheck = new Map<string, Job>();
+    for (const job of this.getBySubmitter(agentId)) {
+      jobsToCheck.set(job.job_id, job);
+    }
+    for (const job of this.getByAgent(agentId)) {
+      jobsToCheck.set(job.job_id, job);
+    }
+
+    for (const job of jobsToCheck.values()) {
       if (!job.provenance) continue;
 
       const provRecords = [
@@ -725,6 +783,9 @@ export class JobQueue {
     this.typeIndex.clear();
     this.submitterIndex.clear();
     this.capabilityIndex.clear();
+    this.claimedByIndex.clear();
+    this.pendingIndex.clear();
+    this.pendingCapabilityIndex.clear();
 
     for (const job of this.jobs.values()) {
       this.indexJob(job);
@@ -732,7 +793,7 @@ export class JobQueue {
   }
 
   // Force save (for testing)
-  forceSave(): void {
-    this.save();
+  async forceSave(): Promise<void> {
+    await this.save();
   }
 }
