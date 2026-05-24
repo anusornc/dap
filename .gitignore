@@ -1,2 +1,4 @@
-node_modules
-perf-data*/
+node_modules/
+data/
+coverage/
+dist/

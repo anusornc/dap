@@ -14,7 +14,7 @@ import { AgentCards } from './agent-cards.js';
 import { JobQueue } from './job-queue.js';
 import { WSHandler } from './ws-handler.js';
 import { RESTHandler } from './rest-handler.js';
-import { RelayConfig, MessageAction } from '../protocol/types.js';
+import { RelayConfig, MessageAction, DAPMessage } from '../protocol/types.js';
 import { validateMessage, sanitizeAgentId } from '../protocol/validation.js';
 import { v4 as uuidv4 } from 'uuid';
 import { wsConnections, connectedAgents } from '../utils/metrics.js';
@@ -36,6 +36,7 @@ const DEFAULT_CONFIG: Partial<RelayConfig> = {
   tlsCertPath: process.env.TLS_CERT_PATH || './certs/cert.pem',
   tlsKeyPath: process.env.TLS_KEY_PATH || './certs/key.pem',
   tlsPort: parseInt(process.env.TLS_PORT || '3443'),
+  corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS?.split(',').filter(Boolean) || [],
 };
 
 export class RelayServer {
@@ -74,6 +75,7 @@ export class RelayServer {
 
     this.restHandler = new RESTHandler(this.registry, this.jobQueue, {
       apiKeys: this.config.apiKeys,
+      corsAllowedOrigins: this.config.corsAllowedOrigins,
     });
     this.restHandler.setAgentCards(this.agentCards);
 
@@ -255,7 +257,7 @@ export class RelayServer {
     }));
   }
 
-  private handleMessage(_socket: any, msg: any): void {
+  private handleMessage(_socket: any, msg: DAPMessage): void {
     switch (msg.action) {
       case MessageAction.REQUEST:
         this.handleRequest(msg);
@@ -290,15 +292,15 @@ export class RelayServer {
     }
   }
 
-  private handleRequest(msg: any): void {
+  private handleRequest(msg: DAPMessage): void {
     const to = msg.to;
 
-    if ('agent_id' in to) {
+    if (typeof to === 'object' && to !== null && 'agent_id' in to) {
       const target = this.registry.get(to.agent_id);
       if (target && target.socket.readyState === 1) { // OPEN
         target.socket.send(JSON.stringify(msg));
       }
-    } else if ('capability' in to) {
+    } else if (typeof to === 'object' && to !== null && 'capability' in to) {
       const agents = this.registry.getByCapability(to.capability);
       if (agents.length > 0) {
         // Route to first available (round-robin for better load distribution)
@@ -308,18 +310,18 @@ export class RelayServer {
     }
   }
 
-  private handleResponse(msg: any): void {
+  private handleResponse(msg: DAPMessage): void {
     // Route response back to original requester
     // For now, broadcast to all - sophisticated routing would track message chains
     console.log(`[Relay] Response from ${msg.from.agent_id}`);
   }
 
-  private handleEvent(msg: any): void {
+  private handleEvent(msg: DAPMessage): void {
     const to = msg.to;
 
     if (to === 'broadcast') {
       this.wsHandler.broadcastAll(msg);
-    } else if ('capability' in to) {
+    } else if (typeof to === 'object' && to !== null && 'capability' in to) {
       const agents = this.registry.getByCapability(to.capability);
       for (const agent of agents) {
         if (agent.socket.readyState === 1) {
@@ -329,7 +331,7 @@ export class RelayServer {
     }
   }
 
-  private handleJobSubmission(msg: any): void {
+  private handleJobSubmission(msg: DAPMessage): void {
     const { type, priority, payload, capabilityRequired, constraints } = msg.payload.data;
 
     const job = this.jobQueue.submit(
@@ -357,7 +359,7 @@ export class RelayServer {
     }
   }
 
-  private handleJobClaim(msg: any): void {
+  private handleJobClaim(msg: DAPMessage): void {
     const { jobId } = msg.payload.data;
     const job = this.jobQueue.claim(jobId, msg.from.agent_id);
 
@@ -379,7 +381,7 @@ export class RelayServer {
     }
   }
 
-  private handleJobComplete(msg: any): void {
+  private handleJobComplete(msg: DAPMessage): void {
     const { jobId, result, error } = msg.payload.data;
 
     let job;
