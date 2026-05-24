@@ -140,8 +140,8 @@ export async function runCodex(config: WorkerConfig, task: Task): Promise<Comman
     config.workdir,
     '--sandbox',
     config.sandbox,
-    '--ask-for-approval',
-    config.approval,
+    '--config',
+    `approval_policy="${config.approval}"`,
   ];
 
   if (config.model) {

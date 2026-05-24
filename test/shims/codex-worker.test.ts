@@ -122,6 +122,25 @@ describe('Codex worker', () => {
     expect(Buffer.byteLength(result.data.stdout, 'utf8')).toBeLessThanOrEqual(20);
   });
 
+  it('passes approval policy through current Codex exec config', async () => {
+    const codexBin = await writeExecutable(
+      'fake-codex-args.js',
+      'process.stdout.write(JSON.stringify(process.argv.slice(2)));'
+    );
+
+    const result = await runCodex(config({ codexBin }), {
+      taskId: 'args-task',
+      description: 'inspect args',
+      type: 'allowed-task',
+    });
+
+    expect(result.exitCode).toBe(0);
+    const args = JSON.parse(result.stdout);
+    expect(args).toContain('--config');
+    expect(args).toContain('approval_policy="never"');
+    expect(args).not.toContain('--ask-for-approval');
+  });
+
   it('times out long-running Codex executions', async () => {
     const codexBin = await writeExecutable('fake-codex-timeout.js', 'setTimeout(() => {}, 5000);');
 
