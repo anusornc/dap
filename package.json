@@ -12,6 +12,7 @@
     "shim:mavis": "tsx src/shims/mavis.ts",
     "shim:claude": "tsx src/shims/claude-code.ts",
     "shim:codex": "tsx src/shims/codex.ts",
+    "worker:codex": "tsx src/shims/codex-worker.ts",
     "test": "vitest",
     "test:watch": "vitest --watch",
     "lint": "eslint src --ext .ts"

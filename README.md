@@ -55,6 +55,19 @@ npm run shim:mavis -- --relay ws://localhost:3000/ws --agent-id my-mavis-agent
 npm run shim:claude -- --relay ws://localhost:3000/ws --agent-id my-claude-agent
 ```
 
+**Codex Shim:**
+```bash
+npm run shim:codex -- --relay ws://localhost:3000/ws --agent-id my-codex-agent
+```
+
+To process Codex shim tasks automatically, run the Codex worker in a second terminal on the same machine:
+
+```bash
+npm run worker:codex -- --workdir /path/to/workspace
+```
+
+The shim receives relay tasks into `~/.codex/tasks/incoming`; the worker runs `codex exec` for each task and writes the matching result into `~/.codex/tasks/results`.
+
 ### 4. Send a Message
 
 Use the client library to send messages between agents:
