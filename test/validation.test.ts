@@ -2,7 +2,7 @@
  * Validation Tests
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { validateMessage, validateApiKey, sanitizeAgentId, checkRateLimit, sanitizeMessage } from '../src/protocol/validation.js';
 import { DAPMessageSchema } from '../src/protocol/types.js';
 
@@ -199,5 +199,35 @@ describe('checkRateLimit', () => {
 
     expect(result1.remaining).toBe(2);
     expect(result2.remaining).toBe(4);
+  });
+
+  describe('with fake timers', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should reset rate limit after window expires', () => {
+      const uniqueKey = `test-key-reset-${Date.now()}-${Math.random()}`;
+
+      // Exhaust the limit
+      for (let i = 0; i < 10; i++) {
+        checkRateLimit(uniqueKey, 10, 60000);
+      }
+
+      let result = checkRateLimit(uniqueKey, 10, 60000);
+      expect(result.allowed).toBe(false);
+
+      // Advance time by 60 seconds (60000ms) plus 1ms
+      vi.advanceTimersByTime(60001);
+
+      // Request should be allowed again
+      result = checkRateLimit(uniqueKey, 10, 60000);
+      expect(result.allowed).toBe(true);
+      expect(result.remaining).toBe(9);
+    });
   });
 });
