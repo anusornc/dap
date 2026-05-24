@@ -233,12 +233,13 @@ export class ClaudeCodeShim {
       const result = await new Promise<{ stdout: string; stderr: string; code: number }>((resolve, reject) => {
         const args = [
           '--print',
-          task.description,
         ];
 
         if (this.config.claudeArgs) {
           args.push(...this.config.claudeArgs);
         }
+
+        args.push('--', task.description);
 
         const proc = spawn(this.config.claudePath!, args, {
           cwd: this.config.workDir || process.cwd(),

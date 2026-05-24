@@ -234,17 +234,20 @@ export class MavisShim {
     }, null, 2));
 
     try {
-      const { exec } = await import('child_process');
+      const { execFile } = await import('child_process');
 
       const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
         const targetAgent = this.config.mavisAgentName || 'mavis';
-        const sessionFlag = this.config.mavisSessionId
-          ? `--session ${this.config.mavisSessionId}`
-          : '';
 
-        const cmd = `mavis communication send --to ${targetAgent} ${sessionFlag} --command prompt --content "Task from DAP relay: ${task.description}"`;
+        const args = ['communication', 'send', '--to', targetAgent];
 
-        exec(cmd, {
+        if (this.config.mavisSessionId) {
+          args.push('--session', this.config.mavisSessionId);
+        }
+
+        args.push('--command', 'prompt', '--content', `Task from DAP relay: ${task.description}`);
+
+        execFile('mavis', args, {
           timeout: this.config.timeoutMs,
         }, (err, stdout, stderr) => {
           if (err) {
