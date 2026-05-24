@@ -166,4 +166,11 @@ describe('parseMessage', () => {
     const result = parseMessage({ foo: 'bar' });
     expect(result).toBeNull();
   });
+
+  it('should return null when JSON.stringify throws an error (e.g. cyclic reference)', () => {
+    const obj: any = { version: '1.0.0', msg_id: '123', action: 'request', payload: {} };
+    obj.self = obj; // Create a cyclic reference
+    const result = parseMessage(obj);
+    expect(result).toBeNull();
+  });
 });
