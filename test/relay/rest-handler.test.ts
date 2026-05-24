@@ -72,6 +72,31 @@ describe('RESTHandler', () => {
     });
   });
 
+  describe('CORS', () => {
+    it('does not allow arbitrary origins by default', async () => {
+      const app = handler.getApp();
+      const response = await request(app)
+        .get('/health')
+        .set('Origin', 'https://untrusted.example');
+
+      expect(response.headers['access-control-allow-origin']).toBeUndefined();
+    });
+
+    it('allows configured origins', async () => {
+      handler = new RESTHandler(mockRegistry, mockQueue, {
+        apiKeys: [],
+        corsAllowedOrigins: ['https://app.example'],
+      });
+
+      const app = handler.getApp();
+      const response = await request(app)
+        .get('/health')
+        .set('Origin', 'https://app.example');
+
+      expect(response.headers['access-control-allow-origin']).toBe('https://app.example');
+    });
+  });
+
   describe('Agent Routes', () => {
     it('POST /connect - should return agentId', async () => {
       const app = handler.getApp();
