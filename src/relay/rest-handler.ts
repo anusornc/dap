@@ -55,6 +55,26 @@ export interface A2ADispatchRequest {
 
 export type A2ADispatcher = (request: A2ADispatchRequest) => Promise<DAPMessage>;
 
+function readPositiveTimeoutMs(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+
+  return Math.trunc(value);
+}
+
+function getA2ATimeoutMs(params: {
+  metadata?: Record<string, unknown>;
+  message: { metadata?: Record<string, unknown> };
+  configuration?: Record<string, unknown>;
+}): number | undefined {
+  return (
+    readPositiveTimeoutMs(params.metadata?.timeoutMs) ??
+    readPositiveTimeoutMs(params.message.metadata?.timeoutMs) ??
+    readPositiveTimeoutMs(params.configuration?.timeoutMs)
+  );
+}
+
 export class RESTHandler {
   private app: express.Application;
   private registry: AgentRegistry;
@@ -795,7 +815,11 @@ export class RESTHandler {
 
     try {
       const task = messageSendParamsToDapTask(params);
-      const reply = await this.a2aDispatcher({ targetAgentId, task });
+      const reply = await this.a2aDispatcher({
+        targetAgentId,
+        task,
+        timeoutMs: getA2ATimeoutMs(params),
+      });
       const data = reply.payload.data;
 
       if (data.success === false || data.error) {

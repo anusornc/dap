@@ -282,6 +282,25 @@ describe('A2A bridge routes', () => {
       },
     });
   });
+
+  it('allows A2A requests to override the default relay timeout', async () => {
+    const worker = await connectWorker();
+    const workerRequest = waitForMessage(worker, msg => msg.action === MessageAction.REQUEST);
+    const body = messageSendBody('long-running');
+    (body.params as any).metadata = { timeoutMs: 200 };
+    const httpResponse = request(httpUrl)
+      .post('/a2a/agents/worker')
+      .send(body)
+      .then(response => response);
+
+    const dapRequest = await workerRequest;
+    await new Promise(resolve => setTimeout(resolve, 75));
+    worker.send(JSON.stringify(makeReply(dapRequest.msg_id, 'completed after default timeout')));
+
+    const response = await httpResponse;
+    expect(response.status).toBe(200);
+    expect(response.body.result.parts).toEqual([{ kind: 'text', text: 'completed after default timeout' }]);
+  });
 });
 
 describe('A2A bridge API-key behavior', () => {

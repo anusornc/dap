@@ -243,10 +243,15 @@ curl -X POST http://localhost:3000/a2a \
         "messageId": "msg-2",
         "kind": "message"
       },
-      "metadata": { "targetAgentId": "my-codex-agent" }
+      "metadata": {
+        "targetAgentId": "my-codex-agent",
+        "timeoutMs": 600000
+      }
     }
   }'
 ```
+
+Use `metadata.timeoutMs` for long-running remote agent work. If omitted, the relay's `REQUEST_TIMEOUT_MS` default applies.
 
 If `API_KEYS` is configured, use the same REST header as other HTTP endpoints:
 
