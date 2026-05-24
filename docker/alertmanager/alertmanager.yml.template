@@ -19,7 +19,7 @@ receivers:
         from: "${SMTP_USER}"
     slack_configs:
       - send_resolved: true
-        webhook_url: "${SLACK_WEBHOOK_URL}"
+        api_url: "${SLACK_WEBHOOK_URL}"
         channel: '#alerts'
         title: "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}"
         text: "{{ range .Alerts }}\n**{{ .Labels.alertname }}**\n{{ .Annotations.description }}\n{{ end }}"

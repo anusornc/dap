@@ -16,7 +16,6 @@ dist/
 # Development tools and configs
 .mavis/
 .mavis/**/*
-tsconfig.json
 vitest.config.ts
 vitest.config.js
 *.test.ts

@@ -33,8 +33,8 @@
         {"expr": "dap_pending_jobs", "legendFormat": "Pending", "refId": "A"},
         {"expr": "dap_claimed_jobs", "legendFormat": "Claimed", "refId": "B"},
         {"expr": "dap_in_progress_jobs", "legendFormat": "In Progress", "refId": "C"},
-        {"expr": "dap_completed_jobs_total", "legendFormat": "Completed", "refId": "D"},
-        {"expr": "dap_failed_jobs_total", "legendFormat": "Failed", "refId": "E"}
+        {"expr": "dap_jobs_completed_total", "legendFormat": "Completed", "refId": "D"},
+        {"expr": "dap_jobs_failed_total", "legendFormat": "Failed", "refId": "E"}
       ],
       "title": "Jobs by Status",
       "type": "stat"
