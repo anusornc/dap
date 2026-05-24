@@ -54,6 +54,11 @@ export class JobQueue {
   private typeIndex: Map<string, Set<string>> = new Map();
   private submitterIndex: Map<string, Set<string>> = new Map();
   private capabilityIndex: Map<string, Set<string>> = new Map();
+
+  // Pending jobs tracking for faster lookups
+  private pendingIndex: Set<string> = new Set();
+  private pendingCapabilityIndex: Map<string, Set<string>> = new Map();
+
   private dataDir: string;
   private persistencePath: string;
   private saveDebounceTimer?: NodeJS.Timeout;
@@ -175,6 +180,23 @@ export class JobQueue {
       }
       this.capabilityIndex.get(job.capability_required)!.add(job.job_id);
     }
+
+    if (job.status === JobStatus.PENDING) {
+      this.pendingIndex.add(job.job_id);
+      if (job.capability_required) {
+        if (!this.pendingCapabilityIndex.has(job.capability_required)) {
+          this.pendingCapabilityIndex.set(job.capability_required, new Set());
+        }
+        this.pendingCapabilityIndex.get(job.capability_required)!.add(job.job_id);
+      }
+    }
+  }
+
+  private removeFromPendingIndex(job: Job): void {
+    this.pendingIndex.delete(job.job_id);
+    if (job.capability_required) {
+      this.pendingCapabilityIndex.get(job.capability_required)?.delete(job.job_id);
+    }
   }
 
   // ============ Submission ============
@@ -233,6 +255,7 @@ export class JobQueue {
     }
 
     job.status = JobStatus.CLAIMED;
+    this.removeFromPendingIndex(job);
     job.claimed_by = agentId;
     job.started_at = new Date().toISOString();
 
@@ -368,6 +391,7 @@ export class JobQueue {
     const prevStatus = job.status;
 
     job.status = JobStatus.CANCELLED;
+    this.removeFromPendingIndex(job);
     job.error = reason || 'Cancelled by submitter';
     job.completed_at = new Date().toISOString();
     this.scheduleSave();
@@ -415,10 +439,22 @@ export class JobQueue {
   findAvailable(capabilityRequired?: string, type?: string): Job | null {
     let best: Job | null = null;
 
-    for (const job of this.jobs.values()) {
-      if (job.status !== JobStatus.PENDING) continue;
+    let candidateIds: Iterable<string> | undefined;
 
-      if (capabilityRequired && job.capability_required !== capabilityRequired) continue;
+    if (capabilityRequired) {
+      candidateIds = this.pendingCapabilityIndex.get(capabilityRequired);
+    } else {
+      candidateIds = this.pendingIndex;
+    }
+
+    if (!candidateIds) return null;
+
+    for (const jobId of candidateIds) {
+      const job = this.jobs.get(jobId);
+      if (!job) continue;
+
+      // Status check is theoretically redundant due to index, but good for safety
+      if (job.status !== JobStatus.PENDING) continue;
       if (type && job.type !== type) continue;
 
       if (!best || job.priority < best.priority) {
@@ -725,6 +761,8 @@ export class JobQueue {
     this.typeIndex.clear();
     this.submitterIndex.clear();
     this.capabilityIndex.clear();
+    this.pendingIndex.clear();
+    this.pendingCapabilityIndex.clear();
 
     for (const job of this.jobs.values()) {
       this.indexJob(job);
