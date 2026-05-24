@@ -160,7 +160,10 @@ describe('CodexShim', () => {
 
       // Verify response sent via WebSocket
       expect(ws.send).toHaveBeenCalled();
-      const responseCall = ws.send.mock.calls[0][0];
+      const responseCall = ws.send.mock.calls
+        .map(call => call[0])
+        .find(raw => JSON.parse(raw).action === MessageAction.RESPONSE);
+      expect(responseCall).toBeDefined();
       const responseMsg = JSON.parse(responseCall);
 
       expect(responseMsg.action).toBe(MessageAction.RESPONSE);
@@ -207,7 +210,10 @@ describe('CodexShim', () => {
       await messagePromise;
 
       expect(ws.send).toHaveBeenCalled();
-      const responseCall = ws.send.mock.calls[0][0];
+      const responseCall = ws.send.mock.calls
+        .map(call => call[0])
+        .find(raw => JSON.parse(raw).action === MessageAction.RESPONSE);
+      expect(responseCall).toBeDefined();
       const responseMsg = JSON.parse(responseCall);
 
       expect(responseMsg.action).toBe(MessageAction.RESPONSE);

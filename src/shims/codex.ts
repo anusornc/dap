@@ -5,7 +5,7 @@
  */
 
 import { DAPMessage, MessageAction } from '../protocol/types.js';
-import { writeFile, readFile, unlink, readdir, mkdir } from 'fs/promises';
+import { writeFile, readFile, unlink, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -273,17 +273,19 @@ export class CodexShim {
   }
 
   private startPolling(): void {
-    this.pollInterval = setInterval(async () => {
-      try {
-        const files = await readdir(this.resultDir);
-        for (const file of files) {
-          if (file.endsWith('.json')) {
-            console.log(`[Codex Shim] Found result file: ${file}`);
-          }
-        }
-      } catch {
-        // Directory might not exist yet
-      }
+    this.pollInterval = setInterval(() => {
+      void this.sendMessage({
+        version: '1.0.0',
+        msg_id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        from: this.getAgentInfo(),
+        to: 'broadcast',
+        action: MessageAction.HEARTBEAT,
+        payload: {
+          type: 'heartbeat',
+          data: { status: 'healthy' },
+        },
+      });
     }, this.config.pollIntervalMs);
   }
 
