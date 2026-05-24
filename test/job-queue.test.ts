@@ -52,6 +52,16 @@ describe('JobQueue', () => {
       expect(claimed?.claimed_by).toBe('agent-2');
     });
 
+    it('should index claimed jobs by agent', () => {
+      const job = queue.submit('agent-1', 'task', 5, {});
+      queue.claim(job.job_id, 'agent-2');
+
+      const claimedJobs = queue.getByAgent('agent-2');
+      expect(claimedJobs).toHaveLength(1);
+      expect(claimedJobs[0].job_id).toBe(job.job_id);
+      expect(queue.getByAgent('agent-3')).toEqual([]);
+    });
+
     it('should not claim already claimed jobs', () => {
       const job = queue.submit('agent-1', 'task', 5, {});
       queue.claim(job.job_id, 'agent-2');
