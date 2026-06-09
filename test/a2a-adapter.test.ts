@@ -10,6 +10,7 @@ import {
   dapReplyToA2AMessage,
   jsonRpcError,
   messageSendParamsToDapTask,
+  unsupportedMethodError,
 } from '../src/a2a/adapter.js';
 
 describe('A2A adapter', () => {
@@ -122,6 +123,24 @@ describe('A2A adapter', () => {
       error: {
         code: -32601,
         message: 'Nope',
+      },
+    });
+  });
+
+  it('creates valid JSON-RPC error response for unsupported methods', () => {
+    const mockRequest = {
+      jsonrpc: '2.0' as const,
+      id: 'req-2',
+      method: 'unknownMethod',
+    };
+    const response = unsupportedMethodError(mockRequest);
+
+    expect(A2AJsonRpcResponseSchema.parse(response)).toMatchObject({
+      jsonrpc: '2.0',
+      id: 'req-2',
+      error: {
+        code: A2AJsonRpcErrorCode.METHOD_NOT_FOUND,
+        message: 'Unsupported A2A method: unknownMethod',
       },
     });
   });
