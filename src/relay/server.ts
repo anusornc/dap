@@ -5,7 +5,7 @@
 
 import { createServer, Server as HTTPServer } from 'http';
 import { createServer as createHTTPSServer, Server as HTTPSServer } from 'https';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import express from 'express';
 import { readFileSync } from 'fs';
 import { config } from 'dotenv';
@@ -254,7 +254,7 @@ export class RelayServer {
     });
   }
 
-  private handleRegistration(socket: any, msg: any): void {
+  private handleRegistration(socket: WebSocket, msg: any): void {
     const { agentId, capabilities, metadata, os, version } = msg;
 
     if (!agentId) {
@@ -304,7 +304,7 @@ export class RelayServer {
     }));
   }
 
-  private handleMessage(socket: any, msg: DAPMessage): void {
+  private handleMessage(socket: WebSocket, msg: DAPMessage): void {
     const registeredAgent = this.registry.getBySocket(socket);
     if (!registeredAgent) {
       this.sendRelayError(socket, msg, 'Socket is not registered');
@@ -360,7 +360,7 @@ export class RelayServer {
     }
   }
 
-  private handleRequest(socket: any, msg: DAPMessage): void {
+  private handleRequest(socket: WebSocket, msg: DAPMessage): void {
     const to = msg.to;
 
     if (typeof to === 'object' && to !== null && 'agent_id' in to) {
@@ -387,7 +387,7 @@ export class RelayServer {
     }
   }
 
-  private handleReply(socket: any, msg: DAPMessage): void {
+  private handleReply(socket: WebSocket, msg: DAPMessage): void {
     const pending = this.pendingRequests.get(msg.reply_to || '');
     if (!pending) {
       console.warn(`[Relay] Reply without pending request: ${msg.reply_to || 'missing reply_to'}`);
@@ -488,11 +488,11 @@ export class RelayServer {
     });
   }
 
-  private sendRelayError(socket: any, originalMsg: DAPMessage, error: string, details?: string): void {
+  private sendRelayError(socket: WebSocket, originalMsg: DAPMessage, error: string, details?: string): void {
     this.sendRelayErrorReply(socket, originalMsg.msg_id, originalMsg.from.agent_id, error, details);
   }
 
-  private sendRelayErrorReply(socket: any, replyTo: string, toAgentId: string, error: string, details?: string): void {
+  private sendRelayErrorReply(socket: WebSocket, replyTo: string, toAgentId: string, error: string, details?: string): void {
     if (socket.readyState !== 1) return;
 
     const errorMsg: DAPMessage = {
@@ -520,7 +520,7 @@ export class RelayServer {
     socket.send(JSON.stringify(errorMsg));
   }
 
-  private clearPendingForSocket(socket: any, reason: string): void {
+  private clearPendingForSocket(socket: WebSocket, reason: string): void {
     const disconnectedAgent = this.registry.getBySocket(socket);
     for (const [msgId, pending] of this.pendingRequests.entries()) {
       if (pending.kind === 'socket' && pending.requesterSocket === socket) {
@@ -559,7 +559,7 @@ export class RelayServer {
     }
   }
 
-  private handleCapabilityQuery(socket: any, msg: DAPMessage): void {
+  private handleCapabilityQuery(socket: WebSocket, msg: DAPMessage): void {
     const capabilities = this.registry.getAllCapabilities();
     const agents = this.registry.toJSON();
 
