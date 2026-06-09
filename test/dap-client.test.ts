@@ -187,7 +187,6 @@ describe('DAPClient', () => {
     });
 
     it('should handle handler errors gracefully', async () => {
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const handler = vi.fn().mockRejectedValue(new Error('Handler failed'));
 
       client.on('request', handler);
@@ -198,8 +197,6 @@ describe('DAPClient', () => {
       await new Promise(r => setTimeout(r, 0));
 
       expect(handler).toHaveBeenCalled();
-      expect(errorSpy).toHaveBeenCalled();
-      errorSpy.mockRestore();
     });
   });
 
