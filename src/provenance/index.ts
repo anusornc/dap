@@ -79,6 +79,7 @@ export interface ProvenanceEntity {
   'prov:wasDerivedFrom'?: string | string[];
   'prov:location'?: string;
   'prov:qualifiedUsage'?: ProvenanceQualifiedInfluence[];
+  'dap:capabilityRequired'?: string;
   [key: string]: unknown;
 }
 
@@ -93,6 +94,7 @@ export interface ProvenanceActivity {
   'prov:used'?: (string | ProvenanceEntity)[];
   'prov:generated'?: (string | ProvenanceEntity)[];
   'prov:qualifiedAssociation'?: ProvenanceQualifiedAssociation[];
+  'dap:jobId'?: string;
   [key: string]: unknown;
 }
 
@@ -106,6 +108,8 @@ export interface ProvenanceAgent {
     'prov:hadRole'?: string;
   };
   'prov:wasAttributedTo'?: string | string[];
+  'prov:location'?: string;
+  'dap:version'?: string;
   [key: string]: unknown;
 }
 
@@ -127,9 +131,11 @@ export interface ProvenanceQualifiedAssociation {
   'prov:hadPlan'?: string;
 }
 
+export type ProvenanceNode = ProvenanceEntity | ProvenanceActivity | ProvenanceAgent | Record<string, unknown>;
+
 export interface ProvenanceChain {
   '@context'?: string[];
-  '@graph': unknown[];
+  '@graph': ProvenanceNode[];
 }
 
 // ============ Provenance Generator ============
@@ -261,8 +267,8 @@ export class ProvenanceGenerator {
 
     // Add metadata to agent
     if (os || version) {
-      (agent as any)['prov:location'] = os;
-      (agent as any)['dap:version'] = version;
+      agent['prov:location'] = os;
+      agent['dap:version'] = version;
     }
 
     return {
@@ -319,7 +325,7 @@ export class ProvenanceGenerator {
 
     // Add capability requirement if specified
     if (capabilityRequired) {
-      (jobEntity as any)['dap:capabilityRequired'] = capabilityRequired;
+      jobEntity['dap:capabilityRequired'] = capabilityRequired;
     }
 
     return {
@@ -468,7 +474,7 @@ export class ProvenanceGenerator {
     };
 
     if (contextJobId) {
-      (delegation as any)['dap:jobId'] = contextJobId;
+      delegation['dap:jobId'] = contextJobId;
     }
 
     return {
@@ -527,11 +533,20 @@ export interface DateRange {
   to: Date;
 }
 
-export class ProvenanceQuery {
-  private jobQueue: any;
-  private agentRegistry: any;
+export interface ReadOnlyJobQueue {
+  get(jobId: string): any;
+  getByAgent(agentId: string): any[];
+}
 
-  constructor(jobQueue: any, agentRegistry: any) {
+export interface ReadOnlyAgentRegistry {
+  get(agentId: string): any;
+}
+
+export class ProvenanceQuery {
+  private jobQueue: ReadOnlyJobQueue;
+  private agentRegistry: ReadOnlyAgentRegistry;
+
+  constructor(jobQueue: ReadOnlyJobQueue, agentRegistry: ReadOnlyAgentRegistry) {
     this.jobQueue = jobQueue;
     this.agentRegistry = agentRegistry;
   }
@@ -550,44 +565,44 @@ export class ProvenanceQuery {
 
     // Submission step
     if (job.provenance.submission) {
-      const graph = job.provenance.submission['@graph'];
-      const activity = graph.find((e: any) => e['@type']?.includes('Submission'));
-      const agent = graph.find((e: any) => e['prov:wasAttributedTo']);
+      const graph = job.provenance.submission['@graph'] as ProvenanceNode[];
+      const activity = graph.find(e => typeof e === 'object' && e !== null && '@type' in e && (Array.isArray(e['@type']) ? e['@type'].includes('dap:JobSubmission') : typeof e['@type'] === 'string' && e['@type'].includes('Submission'))) as ProvenanceActivity | undefined;
+      const agent = graph.find(e => typeof e === 'object' && e !== null && 'prov:wasAttributedTo' in e) as ProvenanceEntity | ProvenanceAgent | undefined;
       
       steps.push({
         step: stepNum++,
-        timestamp: (activity as any)?.['prov:startedAtTime'] || job.created_at,
+        timestamp: activity?.['prov:startedAtTime'] || job.created_at,
         activity: 'JOB_SUBMISSION',
-        description: `Job submitted by ${(agent as any)?.['prov:wasAttributedTo'] || 'unknown'}`,
-        agentId: (agent as any)?.['prov:wasAttributedTo'] || 'unknown',
+        description: `Job submitted by ${agent?.['prov:wasAttributedTo'] || 'unknown'}`,
+        agentId: (Array.isArray(agent?.['prov:wasAttributedTo']) ? agent?.['prov:wasAttributedTo'][0] : agent?.['prov:wasAttributedTo']) || 'unknown',
         details: { jobType: job.type, priority: job.priority },
       });
     }
 
     // Claim step
     if (job.provenance.claim) {
-      const graph = job.provenance.claim['@graph'];
-      const activity = graph.find((e: any) => e['@type']?.includes('Claim'));
-      const agent = graph.find((e: any) => e['prov:wasAttributedTo']);
+      const graph = job.provenance.claim['@graph'] as ProvenanceNode[];
+      const activity = graph.find(e => typeof e === 'object' && e !== null && '@type' in e && (Array.isArray(e['@type']) ? e['@type'].includes('dap:JobClaim') : typeof e['@type'] === 'string' && e['@type'].includes('Claim'))) as ProvenanceActivity | undefined;
+      const agent = graph.find(e => typeof e === 'object' && e !== null && 'prov:wasAttributedTo' in e) as ProvenanceEntity | ProvenanceAgent | undefined;
       
       steps.push({
         step: stepNum++,
-        timestamp: (activity as any)?.['prov:startedAtTime'] || job.started_at || new Date().toISOString(),
+        timestamp: activity?.['prov:startedAtTime'] || job.started_at || new Date().toISOString(),
         activity: 'JOB_CLAIM',
-        description: `Job claimed by ${(agent as any)?.['prov:wasAttributedTo'] || 'unknown'}`,
-        agentId: (agent as any)?.['prov:wasAttributedTo'] || 'unknown',
+        description: `Job claimed by ${agent?.['prov:wasAttributedTo'] || 'unknown'}`,
+        agentId: (Array.isArray(agent?.['prov:wasAttributedTo']) ? agent?.['prov:wasAttributedTo'][0] : agent?.['prov:wasAttributedTo']) || 'unknown',
         details: { claimedBy: job.claimed_by },
       });
     }
 
     // Execution step
     if (job.provenance.execution) {
-      const graph = job.provenance.execution['@graph'];
-      const activity = graph.find((e: any) => e['@type']?.includes('Execution'));
+      const graph = job.provenance.execution['@graph'] as ProvenanceNode[];
+      const activity = graph.find(e => typeof e === 'object' && e !== null && '@type' in e && (Array.isArray(e['@type']) ? e['@type'].includes('dap:JobExecution') : typeof e['@type'] === 'string' && e['@type'].includes('Execution'))) as ProvenanceActivity | undefined;
       
       steps.push({
         step: stepNum++,
-        timestamp: (activity as any)?.['prov:startedAtTime'] || job.started_at || new Date().toISOString(),
+        timestamp: activity?.['prov:startedAtTime'] || job.started_at || new Date().toISOString(),
         activity: 'JOB_EXECUTION',
         description: `Job execution started`,
         agentId: job.claimed_by || 'unknown',
@@ -596,13 +611,13 @@ export class ProvenanceQuery {
 
     // Completion step
     if (job.provenance.completion) {
-      const graph = job.provenance.completion['@graph'];
-      const activity = graph.find((e: any) => e['@type']?.includes('Execution') || e['@type'] === 'prov:Entity');
-      const isError = graph.some((e: any) => e['@id']?.includes('error'));
+      const graph = job.provenance.completion['@graph'] as ProvenanceNode[];
+      const activity = graph.find(e => typeof e === 'object' && e !== null && '@type' in e && ((Array.isArray(e['@type']) ? e['@type'].includes('dap:JobExecution') : typeof e['@type'] === 'string' && e['@type'].includes('Execution')) || e['@type'] === 'prov:Entity')) as ProvenanceActivity | ProvenanceEntity | undefined;
+      const isError = graph.some(e => typeof e === 'object' && e !== null && '@id' in e && typeof e['@id'] === 'string' && e['@id'].includes('error'));
       
       steps.push({
         step: stepNum++,
-        timestamp: (activity as any)?.['prov:startedAtTime'] || job.completed_at || new Date().toISOString(),
+        timestamp: (activity as ProvenanceActivity)?.['prov:startedAtTime'] || job.completed_at || new Date().toISOString(),
         activity: isError ? 'JOB_FAILED' : 'JOB_COMPLETED',
         description: isError 
           ? `Job failed: ${job.error || 'Unknown error'}`
@@ -644,8 +659,11 @@ export class ProvenanceQuery {
     }
 
     // Check for specific error types in the provenance
-    const graph = job.provenance.completion['@graph'];
-    const errorEntity = graph.find((e: any) => e['@id']?.includes('error') || e['prov:value']?.includes('error'));
+    const graph = job.provenance.completion['@graph'] as ProvenanceNode[];
+    const errorEntity = graph.find(e => typeof e === 'object' && e !== null && (
+      ('@id' in e && typeof e['@id'] === 'string' && e['@id'].includes('error')) ||
+      ('prov:value' in e && typeof e['prov:value'] === 'string' && e['prov:value'].includes('error'))
+    )) as ProvenanceEntity | undefined;
 
     if (errorEntity?.['prov:value']) {
       return `Error: ${errorEntity['prov:value']}`;
