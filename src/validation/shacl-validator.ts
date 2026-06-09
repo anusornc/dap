@@ -301,28 +301,28 @@ private parseTTL(content: string, shapeName: string): ShapeDefinition {
   /**
    * Validate agent registration data
    */
-  validateAgent(data: any): ValidationResult {
+  validateAgent(data: unknown): ValidationResult {
     return this.validate('agent-shape', data);
   }
 
   /**
    * Validate DAP message data
    */
-  validateMessage(data: any): ValidationResult {
+  validateMessage(data: unknown): ValidationResult {
     return this.validate('message-shape', data);
   }
 
   /**
    * Validate job record data
    */
-  validateJob(data: any): ValidationResult {
+  validateJob(data: unknown): ValidationResult {
     return this.validate('job-shape', data);
   }
 
   /**
    * Core validation logic
    */
-  private validate(shapeName: string, data: any): ValidationResult {
+  private validate(shapeName: string, data: unknown): ValidationResult {
     const shape = this.shapes.get(shapeName);
     const errors: ValidationError[] = [];
 
@@ -334,8 +334,11 @@ private parseTTL(content: string, shapeName: string): ShapeDefinition {
       };
     }
 
+    // Cast data to a record so we can access its fields safely
+    const dataRecord = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+
     for (const [fieldName, constraint] of shape.fields.entries()) {
-      const value = data[fieldName];
+      const value = dataRecord[fieldName];
 
       // Check required fields
       if (constraint.required && (value === undefined || value === null || value === '')) {
@@ -418,7 +421,7 @@ private parseTTL(content: string, shapeName: string): ShapeDefinition {
       }
 
       // Check allowedValues
-      if (constraint.allowedValues && !constraint.allowedValues.includes(value)) {
+      if (constraint.allowedValues && !constraint.allowedValues.includes(value as string)) {
         errors.push({
           path: fieldName,
           message: `${fieldName} must be one of: ${constraint.allowedValues.join(', ')}`,
@@ -455,7 +458,7 @@ private parseTTL(content: string, shapeName: string): ShapeDefinition {
   /**
    * Validate field datatype
    */
-  private validateType(fieldName: string, value: any, datatype: string): ValidationError | null {
+  private validateType(fieldName: string, value: unknown, datatype: string): ValidationError | null {
     switch (datatype) {
       case 'string':
         if (typeof value !== 'string') {
