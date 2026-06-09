@@ -3,8 +3,75 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { validateMessage, validateApiKey, sanitizeAgentId, checkRateLimit, sanitizeMessage } from '../src/protocol/validation.js';
+import {
+  validateMessage,
+  validateApiKey,
+  sanitizeAgentId,
+  checkRateLimit,
+  sanitizeMessage,
+  logInvalidKeyAttempt,
+  getInvalidKeyAttempts
+} from '../src/protocol/validation.js';
 import { DAPMessageSchema } from '../src/protocol/types.js';
+
+describe('logInvalidKeyAttempt', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1600000000000));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Clear module-level state between tests
+    const log = getInvalidKeyAttempts() as any[];
+    log.length = 0;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('should correctly format and store a valid key entry', () => {
+    logInvalidKeyAttempt('testkey123', '127.0.0.1', '/api/v1', 'GET');
+
+    const attempts = getInvalidKeyAttempts();
+    expect(attempts.length).toBe(1);
+    expect(attempts[0]).toEqual({
+      key: 'test***',
+      timestamp: 1600000000000,
+      ip: '127.0.0.1',
+      endpoint: '/api/v1',
+      method: 'GET'
+    });
+  });
+
+  it('should handle undefined or empty key correctly', () => {
+    logInvalidKeyAttempt('', '127.0.0.1', '/api/v1', 'POST');
+
+    const attempts = getInvalidKeyAttempts();
+    expect(attempts.length).toBe(1);
+    expect(attempts[0].key).toBe('(empty)');
+  });
+
+  it('should bound the log size to 100 entries', () => {
+    for (let i = 0; i < 105; i++) {
+      logInvalidKeyAttempt(`key${i}`, '127.0.0.1', '/api/v1', 'GET');
+    }
+
+    const attempts = getInvalidKeyAttempts();
+    expect(attempts.length).toBe(100);
+    // The first 5 should have been shifted out
+    expect(attempts[0].key).toBe('key5***');
+    expect(attempts[99].key).toBe('key1***'); // key104
+  });
+
+  it('should call console.warn with the correct formatted message', () => {
+    logInvalidKeyAttempt('testkey123', '127.0.0.1', '/api/v1', 'GET');
+
+    expect(console.warn).toHaveBeenCalledWith(
+      '[Security] Invalid API key attempt: key=test***, ip=127.0.0.1, endpoint=/api/v1, method=GET'
+    );
+  });
+});
 
 describe('validateMessage', () => {
   it('should validate a correct message', () => {
