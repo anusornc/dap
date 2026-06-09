@@ -9,6 +9,7 @@ import { WebSocketServer } from 'ws';
 import express from 'express';
 import { readFileSync } from 'fs';
 import { config } from 'dotenv';
+import { relayLogger } from '../utils/logger.js';
 import { AgentRegistry } from './agent-registry.js';
 import { AgentCards } from './agent-cards.js';
 import { JobQueue } from './job-queue.js';
@@ -24,7 +25,7 @@ import { wsConnections, connectedAgents } from '../utils/metrics.js';
 // Load environment
 config();
 
-console.log('[Relay] Prometheus metrics enabled - default metrics collected');
+relayLogger.info('Prometheus metrics enabled - default metrics collected');
 
 const DEFAULT_CONFIG: Partial<RelayConfig> = {
   port: parseInt(process.env.PORT || '3000'),
@@ -207,7 +208,7 @@ export class RelayServer {
         return;
       }
 
-      console.log(`[Relay] New WebSocket connection`);
+      relayLogger.info(`New WebSocket connection`);
 
       // Update metrics
       wsConnections.inc();
@@ -229,7 +230,7 @@ export class RelayServer {
             this.handleMessage(socket as any, result.data);
           }
         } catch (err) {
-          console.error('[Relay] Invalid message:', err);
+          relayLogger.error('Invalid message format', { error: err });
           socket.send(JSON.stringify({
             error: 'Invalid message format',
           }));
@@ -240,7 +241,7 @@ export class RelayServer {
         const agent = this.registry.getBySocket(socket as any);
         this.clearPendingForSocket(socket as any, 'Socket disconnected');
         if (agent) {
-          console.log(`[Relay] Agent disconnected: ${agent.agentId}`);
+          relayLogger.info(`Agent disconnected: ${agent.agentId}`);
           this.registry.unregister(agent.agentId);
         }
         // Update metrics
@@ -249,7 +250,7 @@ export class RelayServer {
       });
 
       socket.on('error', (err) => {
-        console.error('[Relay] Socket error:', err);
+        relayLogger.error('Socket error', { error: err });
       });
     });
   }
@@ -294,7 +295,7 @@ export class RelayServer {
       return;
     }
 
-    console.log(`[Relay] Agent registered: ${sanitizedId} with capabilities: ${agentInfo.capabilities.join(', ')}`);
+    relayLogger.info(`Agent registered: ${sanitizedId} with capabilities: ${agentInfo.capabilities.join(', ')}`);
 
     socket.send(JSON.stringify({
       success: true,
@@ -415,7 +416,7 @@ export class RelayServer {
       pending.resolve(msg);
     }
 
-    console.log(`[Relay] ${msg.action} from ${msg.from.agent_id} routed to ${pending.requesterAgentId}`);
+    relayLogger.info(`${msg.action} from ${msg.from.agent_id} routed to ${pending.requesterAgentId}`);
   }
 
   private trackPendingRequest(msg: DAPMessage, requesterSocket: any, targetAgentId?: string): void {
@@ -667,7 +668,7 @@ export class RelayServer {
       const stale = this.registry.getStaleAgents(this.config.heartbeatTimeoutMs);
 
       for (const agent of stale) {
-        console.log(`[Relay] Removing stale agent: ${agent.agentId}`);
+        relayLogger.info(`Removing stale agent: ${agent.agentId}`);
         agent.socket.close(4002, 'Heartbeat timeout');
         this.registry.unregister(agent.agentId);
       }
@@ -675,7 +676,7 @@ export class RelayServer {
       // Clean old jobs
       const removedJobs = this.jobQueue.cleanStale(7 * 24 * 60 * 60 * 1000); // 7 days
       if (removedJobs.length > 0) {
-        console.log(`[Relay] Cleaned ${removedJobs.length} old jobs`);
+        relayLogger.info(`Cleaned ${removedJobs.length} old jobs`);
       }
     }, 60000);
   }
@@ -688,12 +689,12 @@ export class RelayServer {
       this.httpServer!.listen(this.config.port, this.config.host, () => {
         const addr = this.httpServer!.address() as any;
         this._boundPort = addr?.port || this.config.port;
-        console.log(`  HTTP:  http://${this.config.host}:${this._boundPort}`);
+        relayLogger.info(`HTTP server listening on http://${this.config.host}:${this._boundPort}`);
 
         // Start HTTPS server if TLS enabled
         if (this.config.enableTls && this.httpsServer) {
           this.httpsServer.listen(this.config.tlsPort, this.config.host, () => {
-            console.log(`  HTTPS: https://${this.config.host}:${this.config.tlsPort}`);
+            relayLogger.info(`HTTPS server listening on https://${this.config.host}:${this.config.tlsPort}`);
             finish();
           });
         } else {
@@ -702,7 +703,7 @@ export class RelayServer {
       });
 
       const finish = () => {
-        console.log(`
+        relayLogger.info(`
  ╔════════════════════════════════════════════════════════╗
  ║           DAP Relay Server v1.0.0                      ║
  ╠════════════════════════════════════════════════════════╣
@@ -722,7 +723,7 @@ export class RelayServer {
   }
 
   async stop(): Promise<void> {
-    console.log('[Relay] Shutting down...');
+    relayLogger.info('Shutting down...');
 
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
@@ -751,7 +752,7 @@ export class RelayServer {
         server.close(() => {
           closed++;
           if (closed === servers.length) {
-            console.log('[Relay] Server stopped');
+            relayLogger.info('Server stopped');
             resolve();
           }
         });
@@ -835,7 +836,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(0);
   });
 
-  relay.start().catch(console.error);
+  relay.start().catch((err: any) => relayLogger.error('Failed to start server', { error: err }));
 }
 
 export default RelayServer;
