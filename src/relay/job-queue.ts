@@ -626,7 +626,7 @@ export class JobQueue {
     }
 
     return records.sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0
     );
   }
 
@@ -666,7 +666,7 @@ export class JobQueue {
     }
 
     return records.sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0
     );
   }
 
@@ -698,7 +698,7 @@ export class JobQueue {
     }
 
     return records.sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0
     );
   }
 
