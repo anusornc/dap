@@ -493,7 +493,9 @@ export class JobQueue {
 
     results.sort((a, b) => {
       if (a.priority !== b.priority) return a.priority - b.priority;
-      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      if (a.created_at < b.created_at) return -1;
+      if (a.created_at > b.created_at) return 1;
+      return 0;
     });
 
     if (filter.offset) {
