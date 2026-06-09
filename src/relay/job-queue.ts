@@ -625,9 +625,7 @@ export class JobQueue {
       records.push(this.toQueryRecord(job.provenance.completion, jobId));
     }
 
-    return records.sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
+    return records.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   }
 
   /**
@@ -665,9 +663,7 @@ export class JobQueue {
       }
     }
 
-    return records.sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
+    return records.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   }
 
   /**
@@ -697,9 +693,7 @@ export class JobQueue {
       }
     }
 
-    return records.sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
+    return records.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   }
 
   /**
