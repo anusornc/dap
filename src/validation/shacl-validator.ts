@@ -233,7 +233,7 @@ private parseTTL(content: string, shapeName: string): ShapeDefinition {
       }
     }
 
-    // Fix version pattern: escape double backslash from TTL
+    // Escape double backslash from TTL for version pattern
     const versionField = shape.fields.get('version');
     if (versionField?.pattern) {
       versionField.pattern = new RegExp(versionField.pattern.source.replace(/\\\\/g, '\\'));
