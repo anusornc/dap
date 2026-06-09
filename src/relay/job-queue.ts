@@ -493,7 +493,7 @@ export class JobQueue {
 
     results.sort((a, b) => {
       if (a.priority !== b.priority) return a.priority - b.priority;
-      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      return a.created_at.localeCompare(b.created_at);
     });
 
     if (filter.offset) {
@@ -626,7 +626,7 @@ export class JobQueue {
     }
 
     return records.sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      a.timestamp.localeCompare(b.timestamp)
     );
   }
 
@@ -666,7 +666,7 @@ export class JobQueue {
     }
 
     return records.sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      a.timestamp.localeCompare(b.timestamp)
     );
   }
 
@@ -698,7 +698,7 @@ export class JobQueue {
     }
 
     return records.sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      a.timestamp.localeCompare(b.timestamp)
     );
   }
 
