@@ -711,7 +711,7 @@ export class RelayServer {
  ║  HTTPS:   https://${this.config.host}:${this.config.tlsPort}                     ║
  ║  WSS:     wss://${this.config.host}:${this.config.tlsPort}/ws              ║` : ''}
  ╠════════════════════════════════════════════════════════╣
- ║  API Keys: ${this.config.apiKeys.length > 0 ? this.config.apiKeys.join(', ') : 'none (open)'}     ║
+ ║  API Keys: ${this.config.apiKeys.length > 0 ? `configured (${this.config.apiKeys.length} keys)` : 'none (open)'}     ║
  ║  Heartbeat: ${this.config.heartbeatIntervalMs}ms / timeout ${this.config.heartbeatTimeoutMs}ms       ║
  ║  TLS:     ${this.config.enableTls ? `enabled (port ${this.config.tlsPort})` : 'disabled'}              ║
  ╚════════════════════════════════════════════════════════╝
