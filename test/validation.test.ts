@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { validateMessage, validateApiKey, sanitizeAgentId, checkRateLimit, sanitizeMessage } from '../src/protocol/validation.js';
+import { validateMessage, validateApiKey, sanitizeAgentId, checkRateLimit, sanitizeMessage, parseApiKeys, ApiKeyScope } from '../src/protocol/validation.js';
 import { DAPMessageSchema } from '../src/protocol/types.js';
 
 describe('validateMessage', () => {
@@ -70,6 +70,75 @@ describe('validateMessage', () => {
   it('should accept null input gracefully', () => {
     const result = validateMessage(null);
     expect(result.success).toBe(false);
+  });
+});
+
+describe('parseApiKeys', () => {
+  it('should return empty array for undefined or empty input', () => {
+    expect(parseApiKeys(undefined)).toEqual([]);
+    expect(parseApiKeys('')).toEqual([]);
+    expect(parseApiKeys('   ')).toEqual([]);
+  });
+
+  it('should parse single key without scope (defaults to read)', () => {
+    const result = parseApiKeys('my-key');
+    expect(result).toHaveLength(1);
+    expect(result[0].key).toBe('my-key');
+    expect(result[0].scope).toBe(ApiKeyScope.READ);
+    expect(result[0].description).toBe('Key ending in ...-key');
+    expect(result[0].createdAt).toBeDefined();
+  });
+
+  it('should parse single key with valid scope', () => {
+    const result = parseApiKeys('admin-key:admin');
+    expect(result).toHaveLength(1);
+    expect(result[0].key).toBe('admin-key');
+    expect(result[0].scope).toBe(ApiKeyScope.ADMIN);
+  });
+
+  it('should fallback to read scope for invalid scope', () => {
+    const result = parseApiKeys('some-key:super-admin');
+    expect(result).toHaveLength(1);
+    expect(result[0].key).toBe('some-key');
+    expect(result[0].scope).toBe(ApiKeyScope.READ);
+  });
+
+  it('should parse multiple keys with varying scopes', () => {
+    const result = parseApiKeys('key1,key2:write,key3:admin,key4:invalid');
+    expect(result).toHaveLength(4);
+
+    expect(result[0].key).toBe('key1');
+    expect(result[0].scope).toBe(ApiKeyScope.READ);
+
+    expect(result[1].key).toBe('key2');
+    expect(result[1].scope).toBe(ApiKeyScope.WRITE);
+
+    expect(result[2].key).toBe('key3');
+    expect(result[2].scope).toBe(ApiKeyScope.ADMIN);
+
+    expect(result[3].key).toBe('key4');
+    expect(result[3].scope).toBe(ApiKeyScope.READ);
+  });
+
+  it('should handle spaces in the input', () => {
+    const result = parseApiKeys('  key1  ,  key2:write  ');
+    expect(result).toHaveLength(2);
+    expect(result[0].key).toBe('key1');
+    expect(result[1].key).toBe('key2');
+    expect(result[1].scope).toBe(ApiKeyScope.WRITE);
+  });
+
+  it('should handle malformed lists (empty entries)', () => {
+    const result = parseApiKeys('key1,,key2,,,key3:write');
+    expect(result).toHaveLength(3);
+    expect(result.map(r => r.key)).toEqual(['key1', 'key2', 'key3']);
+  });
+
+  it('should handle keys with multiple colons correctly', () => {
+    const result = parseApiKeys('complex:key:name:write');
+    expect(result).toHaveLength(1);
+    expect(result[0].key).toBe('complex');
+    expect(result[0].scope).toBe(ApiKeyScope.READ); // 'key:name:write' is invalid scope
   });
 });
 
