@@ -750,21 +750,18 @@ export class JobQueue {
   // ============ Cleanup ============
 
   cleanStale(maxAgeMs: number): string[] {
-    const cutoff = Date.now() - maxAgeMs;
+    const cutoffMs = Date.now() - maxAgeMs;
+    const cutoffIso = new Date(cutoffMs).toISOString();
     const removed: string[] = [];
 
     for (const [jobId, job] of this.jobs.entries()) {
-      const created = new Date(job.created_at).getTime();
-
-      if (job.status === JobStatus.PENDING && created < cutoff) {
+      if (job.status === JobStatus.PENDING && job.created_at < cutoffIso) {
         this.jobs.delete(jobId);
         removed.push(jobId);
-      }
-
-      if (
+      } else if (
         (job.status === JobStatus.COMPLETED || job.status === JobStatus.FAILED) &&
         job.completed_at &&
-        new Date(job.completed_at).getTime() < cutoff
+        job.completed_at < cutoffIso
       ) {
         this.jobs.delete(jobId);
         removed.push(jobId);

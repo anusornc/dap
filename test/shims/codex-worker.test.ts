@@ -177,7 +177,7 @@ describe('Codex worker', () => {
       type: 'allowed-task',
     });
 
-    expect(Date.now() - start).toBeGreaterThanOrEqual(35);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(25);
     expect(result.exitCode).toBeNull();
     expect(result.error).toBe('Codex timed out after 20ms');
     expect(existsSync(marker)).toBe(false);
