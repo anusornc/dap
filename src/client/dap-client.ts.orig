@@ -60,7 +60,7 @@ export class DAPClient {
       this.socket = new WebSocket(url.toString());
 
       this.socket.onopen = () => {
-        clientLogger.info(`Connected to ${this.config.relayUrl}`);
+        console.log(`[DAPClient] Connected to ${this.config.relayUrl}`);
 
         const registerMsg = {
           action: 'register',
@@ -82,18 +82,18 @@ export class DAPClient {
           const msg = JSON.parse(event.data) as DAPMessage;
           await this.handleMessage(msg);
         } catch (err) {
-          clientLogger.error('Message handling error', { error: err });
+          console.error('[DAPClient] Message handling error:', err);
         }
       };
 
       this.socket.onclose = (event) => {
-        clientLogger.info(`Disconnected: ${event.code}`);
+        console.log(`[DAPClient] Disconnected: ${event.code}`);
         this.connected = false;
         this.scheduleReconnect();
       };
 
       this.socket.onerror = (err) => {
-        clientLogger.error('Connection error', { error: err });
+        console.error('[DAPClient] Connection error:', err);
         reject(err);
       };
     });
