@@ -38,6 +38,39 @@ class MockWebSocket {
   }
 }
 
+describe('createDAPClient', () => {
+  it('should return a new DAPClient instance with the given config', () => {
+    const config: DAPClientConfig = {
+      relayUrl: 'ws://localhost:3000',
+      agentId: 'test-agent',
+      capabilities: [{ name: 'test-cap', version: '1.0.0' }],
+    };
+
+    const client = createDAPClient(config);
+    expect(client).toBeInstanceOf(DAPClient);
+    expect(client.getAgentId()).toBe('test-agent');
+    expect(client.getCapabilitiesList()).toEqual(['test-cap']);
+    expect((client as any).config.relayUrl).toBe('ws://localhost:3000');
+    expect((client as any).config.reconnectIntervalMs).toBe(5000); // Check default values
+    expect((client as any).config.requestTimeoutMs).toBe(60000); // Check default values
+  });
+
+  it('should override default config with provided values', () => {
+    const config: DAPClientConfig = {
+      relayUrl: 'ws://localhost:3000',
+      agentId: 'test-agent',
+      capabilities: [{ name: 'test-cap', version: '1.0.0' }],
+      reconnectIntervalMs: 1000,
+      requestTimeoutMs: 10000,
+    };
+
+    const client = createDAPClient(config);
+    expect(client).toBeInstanceOf(DAPClient);
+    expect((client as any).config.reconnectIntervalMs).toBe(1000);
+    expect((client as any).config.requestTimeoutMs).toBe(10000);
+  });
+});
+
 describe('DAPClient', () => {
   let originalWebSocket: any;
   let client: DAPClient;
