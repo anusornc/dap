@@ -337,36 +337,12 @@ private parseTTL(content: string, shapeName: string): ShapeDefinition {
     for (const [fieldName, constraint] of shape.fields.entries()) {
       const value = data[fieldName];
 
-      // Check required fields
-      if (constraint.required && (value === undefined || value === null || value === '')) {
-        errors.push({
-          path: fieldName,
-          message: `${fieldName} is required and must not be empty`,
-          severity: 'error',
-        });
-        continue;
-      }
+      if (this.checkRequiredField(fieldName, value, constraint, errors)) continue;
 
       // Skip validation if field not present and not required
       if (value === undefined || value === null) continue;
 
-      // For array fields, check minCount first (before type check)
-      if (constraint.datatype === 'array') {
-        if (!Array.isArray(value)) {
-          errors.push({
-            path: fieldName,
-            message: `${fieldName} must be an array`,
-            severity: 'error',
-          });
-        } else if (constraint.minCount !== undefined && value.length < constraint.minCount) {
-          errors.push({
-            path: fieldName,
-            message: `${fieldName} must contain at least ${constraint.minCount} item(s)`,
-            severity: 'error',
-          });
-        }
-        continue; // Skip other checks for arrays
-      }
+      if (this.checkArrayConstraint(fieldName, value, constraint, errors)) continue;
 
       // Check datatype (for non-array fields)
       if (constraint.datatype) {
@@ -377,72 +353,11 @@ private parseTTL(content: string, shapeName: string): ShapeDefinition {
         }
       }
 
-      // Check pattern
-      if (constraint.pattern && typeof value === 'string') {
-        if (!constraint.pattern.test(value)) {
-          errors.push({
-            path: fieldName,
-            message: `${fieldName} must match pattern ${constraint.pattern}`,
-            severity: 'error',
-          });
-        }
-      }
-
-      // Check minLength
-      if (constraint.minLength !== undefined && typeof value === 'string') {
-        if (value.length < constraint.minLength) {
-          errors.push({
-            path: fieldName,
-            message: `${fieldName} must be at least ${constraint.minLength} characters`,
-            severity: 'error',
-          });
-        }
-      }
-
-      // Check numeric range (minInclusive / maxInclusive)
-      if ((constraint.minInclusive !== undefined || constraint.maxInclusive !== undefined) && typeof value === 'number') {
-        if (constraint.minInclusive !== undefined && value < constraint.minInclusive) {
-          errors.push({
-            path: fieldName,
-            message: `${fieldName} must be >= ${constraint.minInclusive}`,
-            severity: 'error',
-          });
-        }
-        if (constraint.maxInclusive !== undefined && value > constraint.maxInclusive) {
-          errors.push({
-            path: fieldName,
-            message: `${fieldName} must be <= ${constraint.maxInclusive}`,
-            severity: 'error',
-          });
-        }
-      }
-
-      // Check allowedValues
-      if (constraint.allowedValues && !constraint.allowedValues.includes(value)) {
-        errors.push({
-          path: fieldName,
-          message: `${fieldName} must be one of: ${constraint.allowedValues.join(', ')}`,
-          severity: 'error',
-        });
-      }
-
-      // Check value range
-      if (constraint.valueRange && typeof value === 'number') {
-        if (constraint.valueRange.min !== undefined && value < constraint.valueRange.min) {
-          errors.push({
-            path: fieldName,
-            message: `${fieldName} must be at least ${constraint.valueRange.min}`,
-            severity: 'error',
-          });
-        }
-        if (constraint.valueRange.max !== undefined && value > constraint.valueRange.max) {
-          errors.push({
-            path: fieldName,
-            message: `${fieldName} must be at most ${constraint.valueRange.max}`,
-            severity: 'error',
-          });
-        }
-      }
+      this.checkPatternConstraint(fieldName, value, constraint, errors);
+      this.checkMinLengthConstraint(fieldName, value, constraint, errors);
+      this.checkNumericRangeConstraint(fieldName, value, constraint, errors);
+      this.checkAllowedValuesConstraint(fieldName, value, constraint, errors);
+      this.checkValueRangeConstraint(fieldName, value, constraint, errors);
     }
 
     return {
@@ -450,6 +365,110 @@ private parseTTL(content: string, shapeName: string): ShapeDefinition {
       errors,
       shape: shapeName,
     };
+  }
+
+  private checkRequiredField(fieldName: string, value: any, constraint: FieldConstraint, errors: ValidationError[]): boolean {
+    if (constraint.required && (value === undefined || value === null || value === '')) {
+      errors.push({
+        path: fieldName,
+        message: `${fieldName} is required and must not be empty`,
+        severity: 'error',
+      });
+      return true;
+    }
+    return false;
+  }
+
+  private checkArrayConstraint(fieldName: string, value: any, constraint: FieldConstraint, errors: ValidationError[]): boolean {
+    if (constraint.datatype === 'array') {
+      if (!Array.isArray(value)) {
+        errors.push({
+          path: fieldName,
+          message: `${fieldName} must be an array`,
+          severity: 'error',
+        });
+      } else if (constraint.minCount !== undefined && value.length < constraint.minCount) {
+        errors.push({
+          path: fieldName,
+          message: `${fieldName} must contain at least ${constraint.minCount} item(s)`,
+          severity: 'error',
+        });
+      }
+      return true; // Skip other checks for arrays
+    }
+    return false;
+  }
+
+  private checkPatternConstraint(fieldName: string, value: any, constraint: FieldConstraint, errors: ValidationError[]): void {
+    if (constraint.pattern && typeof value === 'string') {
+      if (!constraint.pattern.test(value)) {
+        errors.push({
+          path: fieldName,
+          message: `${fieldName} must match pattern ${constraint.pattern}`,
+          severity: 'error',
+        });
+      }
+    }
+  }
+
+  private checkMinLengthConstraint(fieldName: string, value: any, constraint: FieldConstraint, errors: ValidationError[]): void {
+    if (constraint.minLength !== undefined && typeof value === 'string') {
+      if (value.length < constraint.minLength) {
+        errors.push({
+          path: fieldName,
+          message: `${fieldName} must be at least ${constraint.minLength} characters`,
+          severity: 'error',
+        });
+      }
+    }
+  }
+
+  private checkNumericRangeConstraint(fieldName: string, value: any, constraint: FieldConstraint, errors: ValidationError[]): void {
+    if ((constraint.minInclusive !== undefined || constraint.maxInclusive !== undefined) && typeof value === 'number') {
+      if (constraint.minInclusive !== undefined && value < constraint.minInclusive) {
+        errors.push({
+          path: fieldName,
+          message: `${fieldName} must be >= ${constraint.minInclusive}`,
+          severity: 'error',
+        });
+      }
+      if (constraint.maxInclusive !== undefined && value > constraint.maxInclusive) {
+        errors.push({
+          path: fieldName,
+          message: `${fieldName} must be <= ${constraint.maxInclusive}`,
+          severity: 'error',
+        });
+      }
+    }
+  }
+
+  private checkAllowedValuesConstraint(fieldName: string, value: any, constraint: FieldConstraint, errors: ValidationError[]): void {
+    if (constraint.allowedValues && !constraint.allowedValues.includes(value)) {
+      errors.push({
+        path: fieldName,
+        message: `${fieldName} must be one of: ${constraint.allowedValues.join(', ')}`,
+        severity: 'error',
+      });
+    }
+  }
+
+  private checkValueRangeConstraint(fieldName: string, value: any, constraint: FieldConstraint, errors: ValidationError[]): void {
+    if (constraint.valueRange && typeof value === 'number') {
+      if (constraint.valueRange.min !== undefined && value < constraint.valueRange.min) {
+        errors.push({
+          path: fieldName,
+          message: `${fieldName} must be at least ${constraint.valueRange.min}`,
+          severity: 'error',
+        });
+      }
+      if (constraint.valueRange.max !== undefined && value > constraint.valueRange.max) {
+        errors.push({
+          path: fieldName,
+          message: `${fieldName} must be at most ${constraint.valueRange.max}`,
+          severity: 'error',
+        });
+      }
+    }
   }
 
   /**
